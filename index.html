@@ -102,6 +102,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
       <div class="sub" id="status">Wird geladen …</div>
     </div>
     <div class="actions">
+      <button class="btn ghost" id="btnOutlook" type="button">Outlook</button>
       <button class="btn ghost" id="btnPeople" type="button">Personen</button>
       <button class="btn" id="btnAdd" type="button">+ Eintrag</button>
     </div>
@@ -180,6 +181,18 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
         <button class="btn" type="submit">Hinzufügen</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div class="modal" id="oModal" hidden>
+  <div class="sheet">
+    <h2>Mit Outlook verbinden</h2>
+    <p class="sub" style="margin:0">Dieser Link zeigt alle Familientermine in Outlook an (nur lesen). Wer den Link kennt, kann die Termine sehen. Gib ihn nur in der Familie weiter.</p>
+    <label for="oUrl">Abo-Link <input id="oUrl" readonly></label>
+    <div class="actions"><button class="btn" id="oCopy" type="button">Link kopieren</button></div>
+    <p class="sub" style="margin:0"><strong>Outlook (Web, outlook.com):</strong> Kalender hinzufügen, dann Aus dem Internet abonnieren, Link einfügen.<br><strong>Outlook (Windows, neu):</strong> Kalender hinzufügen, dann Aus dem Internet abonnieren.<br><strong>Outlook (Windows, klassisch):</strong> Kalender öffnen, dann Aus dem Internet.<br>Outlook aktualisiert abonnierte Kalender alle paar Stunden. Neue Einträge erscheinen deshalb mit Verzögerung.</p>
+    <div class="err" id="oErr" role="alert"></div>
+    <div class="actions"><button class="btn ghost" id="oClose" type="button">Schließen</button></div>
   </div>
 </div>
 
@@ -397,11 +410,25 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     }).catch(function(){});
   });
 
+  /* ---- Outlook ---- */
+  $('btnOutlook').onclick=function(){
+    $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oModal').hidden=false;
+    call({op:'ics'}).then(function(j){$('oUrl').value=j.url}).catch(function(){$('oUrl').value='';$('oErr').textContent='Der Link konnte nicht geladen werden.'});
+  };
+  $('oCopy').onclick=function(){
+    var f=$('oUrl');f.select();
+    var done=function(){$('oErr').textContent='Link kopiert.'};
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(f.value).then(done,function(){try{document.execCommand('copy');done()}catch(e){}})}
+    else{try{document.execCommand('copy');done()}catch(e){}}
+  };
+  $('oClose').onclick=function(){$('oModal').hidden=true};
+  $('oModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
+
   /* ---- Navigation ---- */
   $('prev').onclick=function(){view=new Date(view.getFullYear(),view.getMonth()-1,1);renderGrid()};
   $('next').onclick=function(){view=new Date(view.getFullYear(),view.getMonth()+1,1);renderGrid()};
   $('today').onclick=function(){view=new Date();view.setDate(1);selected=today;renderAll()};
-  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true}});
 
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();

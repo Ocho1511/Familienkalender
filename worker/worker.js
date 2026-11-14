@@ -70,10 +70,72 @@ function cleanEvent(e) {
   };
 }
 
+// ---- Outlook-Abo (iCalendar-Feed, nur lesend) ----
+function icsEsc(t) {
+  return String(t || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+function icsFold(line) {
+  const enc = new TextEncoder();
+  if (enc.encode(line).length <= 74) return line;
+  const out = [];
+  let cur = '';
+  for (const ch of line) {
+    const limit = out.length === 0 ? 74 : 73;
+    if (enc.encode(cur + ch).length > limit) { out.push(cur); cur = ch; } else cur += ch;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+}
+const d8 = (s) => s.replace(/-/g, '');
+function nextDay(s) {
+  const d = new Date(s + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+function buildIcs(state) {
+  const names = {};
+  (state.members || []).forEach((m) => { names[m.id] = m.name; });
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Familienkalender//DE', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'X-WR-CALNAME:Familienkalender', 'X-PUBLISHED-TTL:PT1H', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H'];
+  (state.events || []).forEach((e) => {
+    const who = e.who && names[e.who] ? names[e.who] : 'Alle';
+    const end = e.end && e.end >= e.start ? e.end : e.start;
+    L.push('BEGIN:VEVENT', 'UID:' + e.id + '@familienkalender', 'DTSTAMP:' + stamp);
+    if (e.time) {
+      const t = e.time.replace(':', '') + '00';
+      const [h, m] = e.time.split(':').map(Number);
+      const endT = e.end && e.end > e.start ? e.time.replace(':', '') + '00' : String((h + 1) % 24).padStart(2, '0') + String(m).padStart(2, '0') + '00';
+      const endDate = e.end && e.end > e.start ? e.end : (h + 1 >= 24 ? nextDay(e.start) : e.start);
+      L.push('DTSTART:' + d8(e.start) + 'T' + t, 'DTEND:' + d8(endDate) + 'T' + endT);
+    } else {
+      L.push('DTSTART;VALUE=DATE:' + d8(e.start), 'DTEND;VALUE=DATE:' + d8(nextDay(end)));
+    }
+    L.push('SUMMARY:' + icsEsc(who + ': ' + e.title), 'CATEGORIES:' + icsEsc(e.cat || 'Termin'));
+    if (e.note) L.push('DESCRIPTION:' + icsEsc(e.note));
+    L.push('END:VEVENT');
+  });
+  L.push('END:VCALENDAR');
+  return L.map(icsFold).join('\r\n') + '\r\n';
+}
+
 export default {
   async fetch(request, env) {
     const c = cors(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: c });
+
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/ics') {
+      const ip0 = request.headers.get('CF-Connecting-IP') || 'anon';
+      if (!env.KV || !env.ICS_TOKEN) return new Response('nicht eingerichtet', { status: 500 });
+      if ((await failCount(env, ip0)) >= 10) return new Response('zu viele Versuche', { status: 429 });
+      if (!(await sameText(url.searchParams.get('t') || '', String(env.ICS_TOKEN).trim()))) {
+        await addFail(env, ip0);
+        return new Response('nicht gefunden', { status: 404 });
+      }
+      const st = (await env.KV.get('state', 'json')) || { members: [], events: [] };
+      return new Response(buildIcs(st), { headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=300' } });
+    }
     if (request.method !== 'POST') return reply({ error: 'POST erwartet' }, 405, c);
     if (!env.KV || !env.FAMILY_PASSWORD) return reply({ error: 'Worker nicht eingerichtet' }, 500, c);
 
@@ -91,6 +153,10 @@ export default {
     state.members = state.members || [];
     state.events = state.events || [];
 
+    if (body.op === 'ics') {
+      if (!env.ICS_TOKEN) return reply({ error: 'Outlook-Link nicht eingerichtet' }, 500, c);
+      return reply({ url: url.origin + '/ics?t=' + String(env.ICS_TOKEN).trim() }, 200, c);
+    }
     if (body.op === 'pull') return reply({ members: state.members, events: state.events }, 200, c);
 
     if (body.op === 'put' || body.op === 'del') {
