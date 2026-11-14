@@ -1,5 +1,9 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Familienkalender</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&display=swap">
 <style>
 /* Layout: Kopfzeile mit Personen-Filter, Monatsraster links, Tagesliste + Demnächst rechts (auf dem Handy untereinander) */
@@ -86,7 +90,10 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 .mem span{display:flex;align-items:center;gap:8px;min-width:0;overflow-wrap:anywhere}
 .mem i{width:12px;height:12px;border-radius:50%;background:var(--c);flex:none}
 .err{color:var(--danger);font-size:13px;min-height:1em}
+.login{max-width:360px;margin:12vh auto 0}
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header>
@@ -176,23 +183,33 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   </div>
 </div>
 
+<div class="modal" id="loginModal" hidden>
+  <form class="sheet login" id="loginForm">
+    <h2>Familienkalender</h2>
+    <label for="lpass">Familien-Passwort <input id="lpass" type="password" autocomplete="current-password" required></label>
+    <div class="err" id="lerr" role="alert"></div>
+    <div class="actions"><button class="btn" type="submit">Öffnen</button></div>
+  </form>
+</div>
+
 <script>
 (function(){
+  var API='https://familienkalender.ocho1511.workers.dev';
   var COLORS=['#2f6b57','#d1603d','#3f6fb5','#c7952c','#8a5bb0','#c24f7b','#4a9aa5','#7a8a2c'];
   var MONTH=new Intl.DateTimeFormat('de-DE',{month:'long',year:'numeric'});
   var LONG=new Intl.DateTimeFormat('de-DE',{weekday:'long',day:'numeric',month:'long'});
   var SHORT=new Intl.DateTimeFormat('de-DE',{weekday:'short',day:'numeric',month:'short'});
   var $=function(id){return document.getElementById(id)};
 
-  var members=[], events=[], hidden={}, db=null, canWrite=true;
+  var members=[], events=[], hidden={}, pass='', loaded=false, offline=false;
   var today=iso(new Date());
   var view=new Date(); view.setDate(1);
-  var selected=today, editing=null, pickColor=COLORS[0];
-  var loaded={m:false,e:false}, timer=null;
+  var selected=today, editing=null, pickColor=COLORS[0], busy=false;
 
   function pad(n){return n<10?'0'+n:''+n}
   function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
   function parse(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2])}
+  function uid(){var a='abcdefghijklmnopqrstuvwxyz0123456789',s='';for(var i=0;i<14;i++)s+=a[Math.floor(Math.random()*a.length)];return s}
   function memberOf(id){for(var i=0;i<members.length;i++)if(members[i].id===id)return members[i];return null}
   function colorOf(ev){var m=memberOf(ev.who);return m?m.color:'#7d8a82'}
   function nameOf(ev){var m=memberOf(ev.who);return m?m.name:'Alle'}
@@ -203,12 +220,43 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
       .sort(function(a,b){return (a.time||'99:99')<(b.time||'99:99')?-1:1});
   }
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+  function store(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+  function load(k){try{return localStorage.getItem(k)}catch(e){return null}}
 
-  function setStatus(t,warn){var s=$('status');s.textContent=t;s.className='sub'+(warn?' state warn':'')}
+  /* ---- Worker ---- */
+  function call(payload){
+    payload.pass=pass;
+    return fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(function(r){return r.json().then(function(j){if(!r.ok){var e=new Error(j.error||'Fehler');e.status=r.status;throw e}return j})});
+  }
+  function apply(j){members=(j.members||[]).slice().sort(function(a,b){return a.createdAt-b.createdAt});events=j.events||[];loaded=true;offline=false;renderAll()}
+  function pull(){
+    return call({op:'pull'}).then(apply).catch(function(e){
+      if(e.status===401){store('fk-pass','');pass='';showLogin('Falsches Passwort.')}
+      else if(e.status===429){showLogin(e.message)}
+      else{offline=true;refreshStatus()}
+    });
+  }
+  function showLogin(msg){$('lerr').textContent=msg||'';$('loginModal').hidden=false;$('lpass').focus()}
+  $('loginForm').addEventListener('submit',function(ev){
+    ev.preventDefault();pass=$('lpass').value;
+    call({op:'pull'}).then(function(j){store('fk-pass',pass);$('loginModal').hidden=true;$('lpass').value='';apply(j);startPolling()})
+      .catch(function(e){$('lerr').textContent=e.status===401?'Falsches Passwort.':e.status===429?e.message:'Keine Verbindung zum Server.'});
+  });
+  function startPolling(){
+    if(startPolling.on)return;startPolling.on=true;
+    setInterval(function(){if(!document.hidden&&!busy)pull()},20000);
+    document.addEventListener('visibilitychange',function(){if(!document.hidden)pull()});
+  }
+  function write(payload,errBox){
+    busy=true;
+    return call(payload).then(function(j){busy=false;apply(j)}).catch(function(e){busy=false;errBox.textContent=e.status===401?'Passwort ungültig.':'Speichern hat nicht geklappt. Bitte erneut versuchen.';throw e});
+  }
+
   function refreshStatus(){
-    if(!db){setStatus('Speichern ist hier nicht verfügbar. Bitte angemeldet öffnen.',true);return}
-    if(!loaded.m||!loaded.e){setStatus('Wird geladen …');return}
-    setStatus(canWrite?'Alle können Einträge sehen und hinzufügen.':'Nur lesen: Für Einträge wird Mitwirken-Zugriff gebraucht.',!canWrite);
+    var s=$('status');
+    if(offline){s.textContent='Keine Verbindung. Letzter Stand wird angezeigt.';s.className='sub state warn';return}
+    s.textContent=loaded?'Alle können Einträge sehen und hinzufügen.':'Wird geladen …';s.className='sub';
   }
 
   function renderFilters(){
@@ -217,10 +265,10 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
       var b=el('button','chip');b.type='button';b.style.setProperty('--c',m.color);
       b.setAttribute('aria-pressed',hidden[m.id]?'false':'true');
       b.appendChild(el('i'));b.appendChild(document.createTextNode(m.name));
-      b.onclick=function(){hidden[m.id]=!hidden[m.id];try{localStorage.setItem('fk-hidden',JSON.stringify(hidden))}catch(e){}renderAll()};
+      b.onclick=function(){hidden[m.id]=!hidden[m.id];store('fk-hidden',JSON.stringify(hidden));renderAll()};
       box.appendChild(b);
     });
-    if(!members.length&&loaded.m){box.appendChild(el('span','empty','Noch keine Personen. Über „Personen“ das erste Familienmitglied anlegen.'))}
+    if(!members.length&&loaded)box.appendChild(el('span','empty','Noch keine Personen. Über „Personen“ das erste Familienmitglied anlegen.'));
   }
 
   function renderGrid(){
@@ -258,7 +306,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     b.appendChild(el('div','m',meta));
     if(e.note)b.appendChild(el('div','note',e.note));
     li.appendChild(b);
-    if(canWrite){var ed=el('button','btn ghost sm','Bearbeiten');ed.type='button';ed.onclick=function(){openEvent(e)};li.appendChild(ed)}
+    var ed=el('button','btn ghost sm','Bearbeiten');ed.type='button';ed.onclick=function(){openEvent(e)};li.appendChild(ed);
     return li;
   }
 
@@ -270,13 +318,13 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     evs.forEach(function(e){l.appendChild(item(e,false))});
     var s=$('soon');s.textContent='';
     var up=events.filter(function(e){return visible(e)&&endOf(e)>=today}).sort(function(a,b){return a.start<b.start?-1:a.start>b.start?1:0}).slice(0,8);
-    if(!up.length)s.appendChild(el('li','empty',loaded.e?'Noch nichts geplant.':'Wird geladen …'));
+    if(!up.length)s.appendChild(el('li','empty',loaded?'Noch nichts geplant.':'Wird geladen …'));
     up.forEach(function(e){s.appendChild(item(e,true))});
   }
 
-  function renderAll(){renderFilters();renderGrid();renderSide();refreshStatus()}
+  function renderAll(){renderFilters();renderGrid();renderSide();refreshStatus();if(!$('pModal').hidden)renderPeopleList()}
 
-  /* Eintrag-Dialog */
+  /* ---- Eintrag ---- */
   function fillWho(sel){
     var w=$('fWho');w.textContent='';
     var o=el('option',null,'Alle gemeinsam');o.value='';w.appendChild(o);
@@ -286,7 +334,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   function openEvent(e){
     editing=e||null;
     $('evHead').textContent=e?'Eintrag bearbeiten':'Neuer Eintrag';
-    fillWho(e?e.who:(window.__me||''));
+    fillWho(e?e.who:(load('fk-me')||''));
     $('fTitle').value=e?e.title:'';
     $('fCat').value=e?(e.cat||'Termin'):'Aktivität';
     $('fStart').value=e?e.start:selected;
@@ -297,27 +345,26 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     $('evModal').hidden=false;$('fTitle').focus();
   }
   function closeEvent(){$('evModal').hidden=true;editing=null}
-  $('btnAdd').onclick=function(){if(!canWrite){setStatus('Zum Eintragen wird Mitwirken-Zugriff gebraucht.',true);return}openEvent(null)};
+  $('btnAdd').onclick=function(){openEvent(null)};
   $('evCancel').onclick=closeEvent;
   $('evModal').addEventListener('mousedown',function(e){if(e.target===this)closeEvent()});
   $('evForm').addEventListener('submit',function(ev){
     ev.preventDefault();
     var start=$('fStart').value,end=$('fEnd').value;
     if(end&&end<start){$('evErr').textContent='Das Enddatum liegt vor dem Startdatum.';return}
-    var data={title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:end,time:$('fTime').value,note:$('fNote').value.trim(),
+    var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:end,time:$('fTime').value,note:$('fNote').value.trim(),
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
-    var ref=editing?db.collection('events').doc(editing.id):db.collection('events').doc();
-    ref.set(data).then(function(){selected=start;view=new Date(parse(start).getFullYear(),parse(start).getMonth(),1);closeEvent();renderAll()})
-      .catch(function(){$('evErr').textContent='Speichern hat nicht geklappt. Prüfe, ob du Eintragen darfst, und versuche es erneut.'});
+    if(data.who)store('fk-me',data.who);
+    write({op:'put',kind:'event',item:data},$('evErr')).then(function(){selected=start;view=new Date(parse(start).getFullYear(),parse(start).getMonth(),1);closeEvent();renderAll()}).catch(function(){});
   });
   $('evDel').onclick=function(){
     var b=$('evDel');
     if(b.textContent!=='Wirklich löschen'){b.textContent='Wirklich löschen';return}
-    db.collection('events').doc(editing.id).delete().then(closeEvent).catch(function(){$('evErr').textContent='Löschen hat nicht geklappt.'});
+    write({op:'del',kind:'event',id:editing.id},$('evErr')).then(closeEvent).catch(function(){});
   };
 
-  /* Personen-Dialog */
+  /* ---- Personen ---- */
   function renderSwatches(){
     var s=$('swatches');s.textContent='';
     COLORS.forEach(function(c){
@@ -331,58 +378,36 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     if(!members.length)l.appendChild(el('div','empty','Noch niemand angelegt.'));
     members.forEach(function(m){
       var r=el('div','mem'),n=el('span');var i=el('i');i.style.setProperty('--c',m.color);n.appendChild(i);n.appendChild(document.createTextNode(m.name));r.appendChild(n);
-      if(canWrite){var d=el('button','btn danger sm','Entfernen');d.type='button';
-        d.onclick=function(){if(d.textContent!=='Sicher?'){d.textContent='Sicher?';return}
-          db.collection('members').doc(m.id).delete().catch(function(){$('pErr').textContent='Entfernen hat nicht geklappt.'})};
-        r.appendChild(d)}
-      l.appendChild(r);
+      var d=el('button','btn danger sm','Entfernen');d.type='button';
+      d.onclick=function(){if(d.textContent!=='Sicher?'){d.textContent='Sicher?';return}
+        write({op:'del',kind:'member',id:m.id},$('pErr')).catch(function(){})};
+      r.appendChild(d);l.appendChild(r);
     });
   }
   $('btnPeople').onclick=function(){
-    pickColor=COLORS[members.length%COLORS.length];renderSwatches();renderPeopleList();$('pErr').textContent='';$('pModal').hidden=false;
-    if(canWrite)$('pName').focus();
+    pickColor=COLORS[members.length%COLORS.length];renderSwatches();renderPeopleList();$('pErr').textContent='';$('pModal').hidden=false;$('pName').focus();
   };
   $('pClose').onclick=function(){$('pModal').hidden=true};
   $('pModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
   $('pForm').addEventListener('submit',function(ev){
     ev.preventDefault();
-    if(!canWrite||!db){$('pErr').textContent='Zum Anlegen wird Mitwirken-Zugriff gebraucht.';return}
     var name=$('pName').value.trim();if(!name)return;
-    db.collection('members').doc().set({name:name,color:pickColor,createdAt:Date.now()}).then(function(){
-      $('pName').value='';$('pErr').textContent='';
-      pickColor=COLORS[(members.length+1)%COLORS.length];renderSwatches();
-    }).catch(function(){$('pErr').textContent='Anlegen hat nicht geklappt.'});
+    write({op:'put',kind:'member',item:{id:uid(),name:name,color:pickColor,createdAt:Date.now()}},$('pErr')).then(function(){
+      $('pName').value='';$('pErr').textContent='';pickColor=COLORS[(members.length)%COLORS.length];renderSwatches();
+    }).catch(function(){});
   });
 
-  /* Navigation */
+  /* ---- Navigation ---- */
   $('prev').onclick=function(){view=new Date(view.getFullYear(),view.getMonth()-1,1);renderGrid()};
   $('next').onclick=function(){view=new Date(view.getFullYear(),view.getMonth()+1,1);renderGrid()};
   $('today').onclick=function(){view=new Date();view.setDate(1);selected=today;renderAll()};
   document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true}});
 
-  try{hidden=JSON.parse(localStorage.getItem('fk-hidden')||'{}')||{}}catch(e){hidden={}}
+  try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();
-
-  /* Daten */
-  function snapList(snap){return snap.docs.map(function(d){var o=Object.assign({},d.data());o.id=d.id;return o})}
-  function err(){loaded.m=loaded.e=true;clearTimeout(timer);setStatus('Die Daten konnten nicht geladen werden.',true)}
-  timer=setTimeout(function(){if(!(loaded.m&&loaded.e))setStatus('Die Daten sind gerade nicht erreichbar. Die Seite lädt weiter …',true)},10000);
-
-  window.claude&&window.claude.use('user').then(function(u){
-    if(!u)return;
-    u.can('data.write').then(function(v){if(v===false){canWrite=false;refreshStatus();renderSide()}});
-  });
-  window.claude&&window.claude.use('db').then(function(d){
-    if(!d){refreshStatus();return}
-    db=d;
-    d.collection('members').orderBy('createdAt').onSnapshot(function(s){
-      members=snapList(s);loaded.m=true;if(loaded.e)clearTimeout(timer);
-      if(!$('pModal').hidden)renderPeopleList();renderAll();
-    },err);
-    d.collection('events').onSnapshot(function(s){
-      events=snapList(s);loaded.e=true;if(loaded.m)clearTimeout(timer);renderAll();
-    },err);
-  });
-  if(!window.claude)refreshStatus();
+  pass=load('fk-pass')||'';
+  if(pass){pull().then(startPolling)}else showLogin('');
 })();
 </script>
+</body>
+</html>

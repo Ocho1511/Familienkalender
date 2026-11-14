@@ -1,5 +1,8 @@
 ﻿# Familienkalender
 
-Gemeinsamer Familienkalender (Claude-Artifact). Dies ist nur die Sicherung der Seite; Personen und Eintraege liegen in der Datenbank des Artifacts.
+Gemeinsamer Familienkalender fuer Mats, Leni, Ira und Thomas.
 
-Live: https://claude.ai/artifact/XxBvh5wPLRoyhmr7aeLV5L
+- Seite: index.html (GitHub Pages)
+- Speicher: Cloudflare Worker + KV (Ordner worker), Zugang per Familien-Passwort
+- Passwort setzen: `npx wrangler secret put FAMILY_PASSWORD` im Ordner worker
+- Worker deployen: `npx wrangler deploy` im Ordner worker

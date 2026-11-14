@@ -1,0 +1,14 @@
+﻿name = "familienkalender"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Einmalig anlegen mit
+#   npx wrangler kv namespace create KV
+# und die ausgegebene id hier eintragen.
+[[kv_namespaces]]
+binding = "KV"
+id = "aa44719ca9664acbaacf040d6238548b"
+
+# Passwort setzen mit
+#   npx wrangler secret put FAMILY_PASSWORD
+
