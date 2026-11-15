@@ -234,6 +234,16 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   </div>
 </div>
 
+<div class="modal" id="aModal" hidden style="z-index:30">
+  <form class="sheet login" id="aForm" autocomplete="off">
+    <h2 id="aTitle">Löschen</h2>
+    <p class="sub" style="margin:0">Löschen ist nur mit dem Löschkennwort erlaubt. Es ist nicht das Passwort vom Login.</p>
+    <label for="aPass">Löschkennwort <input id="aPass" type="password" autocomplete="off" required></label>
+    <div class="err" id="aErr" role="alert"></div>
+    <div class="actions"><button class="btn ghost" id="aCancel" type="button">Abbrechen</button><button class="btn danger" type="submit">Löschen</button></div>
+  </form>
+</div>
+
 <div class="modal" id="loginModal" hidden>
   <form class="sheet login" id="loginForm">
     <h2>Familienkalender</h2>
@@ -475,9 +485,8 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     write({op:'put',kind:'event',item:data},$('evErr')).then(function(){selected=start;view=new Date(parse(start).getFullYear(),parse(start).getMonth(),1);closeEvent();renderAll()}).catch(function(){});
   });
   $('evDel').onclick=function(){
-    var b=$('evDel');
-    if(b.textContent!=='Wirklich löschen'){b.textContent='Wirklich löschen';return}
-    write({op:'del',kind:'event',id:editing.id},$('evErr')).then(closeEvent).catch(function(){});
+    var id=editing.id;
+    askAdmin('Eintrag löschen',function(pw){return call({op:'del',kind:'event',id:id,admin:pw}).then(function(j){apply(j);closeEvent()})});
   };
 
   /* ---- Personen ---- */
@@ -495,8 +504,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     members.forEach(function(m){
       var r=el('div','mem'),n=el('span');var i=el('i');i.style.setProperty('--c',m.color);n.appendChild(i);n.appendChild(document.createTextNode(m.name));r.appendChild(n);
       var d=el('button','btn danger sm','Entfernen');d.type='button';
-      d.onclick=function(){if(d.textContent!=='Sicher?'){d.textContent='Sicher?';return}
-        write({op:'del',kind:'member',id:m.id},$('pErr')).catch(function(){})};
+      d.onclick=function(){askAdmin(m.name+' entfernen',function(pw){return call({op:'del',kind:'member',id:m.id,admin:pw}).then(apply)})};
       r.appendChild(d);l.appendChild(r);
     });
   }
@@ -513,6 +521,22 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     }).catch(function(){});
   });
 
+  /* ---- Löschkennwort (getrennt vom Login) ---- */
+  var adminPass='',aRun=null;
+  function askAdmin(title,run){
+    aRun=run;$('aTitle').textContent=title;$('aPass').value=adminPass;$('aErr').textContent='';$('aModal').hidden=false;$('aPass').focus();
+  }
+  $('aForm').addEventListener('submit',function(ev){
+    ev.preventDefault();var pw=$('aPass').value;if(!pw||!aRun)return;
+    $('aErr').textContent='';
+    aRun(pw).then(function(){adminPass=pw;$('aModal').hidden=true}).catch(function(e){
+      if(e&&e.status===403){adminPass='';$('aErr').textContent='Falsches Löschkennwort.'}
+      else if(e&&e.status===429)$('aErr').textContent=e.message;
+      else $('aErr').textContent='Das hat nicht geklappt. Bitte erneut versuchen.';
+    });
+  });
+  $('aCancel').onclick=function(){$('aModal').hidden=true};
+
   /* ---- Familienfoto ---- */
   $('photoFile').addEventListener('change',function(){
     var f=this.files&&this.files[0];if(!f)return;
@@ -522,7 +546,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     },function(){$('photoErr').textContent='Das Bild konnte nicht gelesen werden.'});
     this.value='';
   });
-  $('photoDel').onclick=function(){call({op:'photo_del'}).then(function(){showPhoto(null);$('photoErr').textContent='Foto entfernt.'}).catch(function(){$('photoErr').textContent='Entfernen hat nicht geklappt.'})};
+  $('photoDel').onclick=function(){askAdmin('Foto entfernen',function(pw){return call({op:'photo_del',admin:pw}).then(function(){showPhoto(null);$('photoErr').textContent='Foto entfernt.'})})};
 
   /* ---- Outlook ---- */
   $('btnOutlook').onclick=function(){

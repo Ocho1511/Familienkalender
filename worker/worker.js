@@ -172,6 +172,14 @@ export default {
       await env.KV.put('photo', d);
       return reply({ photo: d }, 200, c);
     }
+    // Loeschen nur mit separatem Loeschkennwort (ADMIN_PASSWORD), nicht mit dem Login-Passwort
+    if (body.op === 'photo_del' || body.op === 'del') {
+      if (!env.ADMIN_PASSWORD) return reply({ error: 'Loeschkennwort nicht eingerichtet' }, 500, c);
+      if (!(await sameText(str(body.admin, 200).trim(), String(env.ADMIN_PASSWORD).trim()))) {
+        await addFail(env, ip);
+        return reply({ error: 'Falsches Loeschkennwort' }, 403, c);
+      }
+    }
     if (body.op === 'photo_del') {
       await env.KV.delete('photo');
       return reply({ photo: null }, 200, c);
