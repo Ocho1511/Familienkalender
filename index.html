@@ -299,6 +299,13 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
       c.type='button';
       c.appendChild(el('span','n',String(d.getDate())));
       var evs=eventsOn(key),dots=el('div','dots');
+      var cols=[];
+      evs.forEach(function(e){var cc=memberOf(e.who)?colorOf(e):null;if(cc&&cols.indexOf(cc)<0)cols.push(cc)});
+      if(cols.length){
+        var tint=function(x){return 'color-mix(in srgb,'+x+' 32%,var(--surface))'};
+        if(cols.length===1)c.style.background=tint(cols[0]);
+        else{var step=100/cols.length,parts=cols.map(function(x,k){return tint(x)+' '+(k*step)+'% '+((k+1)*step)+'%'});c.style.background='linear-gradient(105deg,'+parts.join(',')+')'}
+      }
       evs.slice(0,3).forEach(function(e){var x=el('span','ev',(e.time?e.time+' ':'')+e.title);x.style.setProperty('--c',colorOf(e));dots.appendChild(x)});
       c.appendChild(dots);
       if(evs.length>3)c.appendChild(el('span','more','+'+(evs.length-3)+' weitere'));
