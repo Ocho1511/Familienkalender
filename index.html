@@ -35,6 +35,9 @@ button{cursor:pointer}
 .people{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface);
   border-radius:999px;padding:5px 12px 5px 8px;font-size:14px}
+.chip{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;position:relative}
+.chip.drag{z-index:5;cursor:grabbing;box-shadow:0 6px 18px rgba(0,0,0,.25);opacity:1!important}
+.chip.target{outline:2px dashed var(--accent);outline-offset:2px}
 .chip i{width:12px;height:12px;border-radius:50%;background:var(--c);display:block}
 .chip[aria-pressed="false"]{opacity:.45}
 .chip[aria-pressed="false"] i{background:transparent;box-shadow:inset 0 0 0 2px var(--c)}
@@ -92,6 +95,9 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 .mem i{width:12px;height:12px;border-radius:50%;background:var(--c);flex:none}
 .err{color:var(--danger);font-size:13px;min-height:1em}
 .login{max-width:360px;margin:12vh auto 0}
+#photoBox{border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+#photoBox img{display:block;width:100%;height:clamp(140px,28vw,240px);object-fit:cover}
+#splash .pic{width:132px;height:132px;border-radius:50%;object-fit:cover;border:4px solid var(--surface);box-shadow:0 4px 18px rgba(0,0,0,.25);animation:pop .7s cubic-bezier(.2,.9,.3,1.2) both}
 #splash{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
   transition:opacity .5s ease,visibility .5s}
 #splash.out{opacity:0;visibility:hidden}
@@ -120,6 +126,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 </div>
 
 <div class="wrap">
+  <div id="photoBox" hidden><img id="photoImg" alt="Familienfoto"></div>
   <header>
     <div>
       <h1>Familienkalender</h1>
@@ -196,6 +203,13 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   <div class="sheet">
     <h2>Familienmitglieder</h2>
     <div class="list" id="pList"></div>
+    <div class="list">
+      <label for="photoFile">Familienfoto (nur nach dem Login sichtbar)
+        <input id="photoFile" type="file" accept="image/*">
+      </label>
+      <div class="actions"><button class="btn danger sm" id="photoDel" type="button">Foto entfernen</button></div>
+      <div class="err" id="photoErr" role="alert"></div>
+    </div>
     <form id="pForm" class="list" autocomplete="off">
       <label for="pName">Neue Person <input id="pName" required maxlength="40" placeholder="Name"></label>
       <div class="swatches" id="swatches" role="radiogroup" aria-label="Farbe"></div>
@@ -266,7 +280,23 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     return fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
       .then(function(r){return r.json().then(function(j){if(!r.ok){var e=new Error(j.error||'Fehler');e.status=r.status;throw e}return j})});
   }
-  function apply(j){members=(j.members||[]).slice().sort(function(a,b){return a.createdAt-b.createdAt});events=j.events||[];loaded=true;offline=false;renderAll()}
+  var photoLoaded=false;
+  function showPhoto(d){
+    var box=$('photoBox');
+    if(d){$('photoImg').src=d;box.hidden=false;store('fk-photo',d)}else{box.hidden=true;$('photoImg').removeAttribute('src');store('fk-photo','')}
+  }
+  function loadPhoto(){call({op:'photo_get'}).then(function(j){showPhoto(j.photo)}).catch(function(){})}
+  function resizeToJpeg(file,cb,fail){
+    var url=URL.createObjectURL(file),im=new Image();
+    im.onload=function(){
+      var m=1200,sc=Math.min(1,m/Math.max(im.width,im.height)),cv=document.createElement('canvas');
+      cv.width=Math.round(im.width*sc);cv.height=Math.round(im.height*sc);
+      cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height);URL.revokeObjectURL(url);cb(cv.toDataURL('image/jpeg',.82));
+    };
+    im.onerror=function(){URL.revokeObjectURL(url);fail()};
+    im.src=url;
+  }
+  function apply(j){if(!photoLoaded){photoLoaded=true;loadPhoto()}members=(j.members||[]).slice().sort(function(a,b){var x=a.order!=null?a.order:1e6,y=b.order!=null?b.order:1e6;return x-y||a.createdAt-b.createdAt});events=j.events||[];loaded=true;offline=false;renderAll()}
   function pull(){
     return call({op:'pull'}).then(apply).catch(function(e){
       if(e.status===401){store('fk-pass','');pass='';showLogin('Falsches Passwort.')}
@@ -302,10 +332,52 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
       var b=el('button','chip');b.type='button';b.style.setProperty('--c',m.color);
       b.setAttribute('aria-pressed',hidden[m.id]?'false':'true');
       b.appendChild(el('i'));b.appendChild(document.createTextNode(m.name));
-      b.onclick=function(){hidden[m.id]=!hidden[m.id];store('fk-hidden',JSON.stringify(hidden));renderAll()};
+      b.onclick=function(){if(dragMoved)return;hidden[m.id]=!hidden[m.id];store('fk-hidden',JSON.stringify(hidden));renderAll()};
+      b.addEventListener('pointerdown',function(e){startDrag(e,b,m.id)});
+      b.dataset.id=m.id;
       box.appendChild(b);
     });
     if(!members.length&&loaded)box.appendChild(el('span','empty','Noch keine Personen. Über „Personen“ das erste Familienmitglied anlegen.'));
+  }
+
+  /* Kacheln der Personen per Ziehen umsortieren (Maus und Touch) */
+  var dragMoved=false;
+  function startDrag(e,chip,id){
+    if(e.button>0)return;
+    var sx=e.clientX,sy=e.clientY,active=false,target=null;
+    function chipsOther(){return Array.prototype.slice.call($('filters').querySelectorAll('.chip')).filter(function(c){return c!==chip})}
+    function move(ev){
+      var dx=ev.clientX-sx,dy=ev.clientY-sy;
+      if(!active){
+        if(Math.abs(dx)+Math.abs(dy)<8)return;
+        active=true;dragMoved=true;chip.classList.add('drag');
+        try{chip.setPointerCapture(e.pointerId)}catch(x){}
+      }
+      chip.style.transform='translate('+dx+'px,'+dy+'px)';
+      var r0=chip.getBoundingClientRect(),cx=r0.left+r0.width/2,cy=r0.top+r0.height/2;
+      target=null;
+      chipsOther().forEach(function(c){
+        var r=c.getBoundingClientRect();c.classList.remove('target');
+        if(cx>=r.left&&cx<=r.right&&cy>=r.top&&cy<=r.bottom)target=c;
+      });
+      if(target)target.classList.add('target');
+    }
+    function up(){
+      chip.removeEventListener('pointermove',move);chip.removeEventListener('pointerup',up);chip.removeEventListener('pointercancel',up);
+      if(!active)return;
+      var tid=target?target.dataset.id:null;
+      chip.style.transform='';chip.classList.remove('drag');
+      chipsOther().forEach(function(c){c.classList.remove('target')});
+      setTimeout(function(){dragMoved=false},0);
+      if(!tid||tid===id){renderFilters();return}
+      var ids=members.map(function(m){return m.id}),from=ids.indexOf(id),to=ids.indexOf(tid);
+      ids.splice(to,0,ids.splice(from,1)[0]);
+      members=ids.map(function(i){return memberOf(i)});
+      members.forEach(function(m,k){m.order=k});
+      renderAll();
+      call({op:'reorder',ids:ids}).then(apply).catch(function(){offline=true;refreshStatus()});
+    }
+    chip.addEventListener('pointermove',move);chip.addEventListener('pointerup',up);chip.addEventListener('pointercancel',up);
   }
 
   function renderGrid(){
@@ -441,6 +513,17 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     }).catch(function(){});
   });
 
+  /* ---- Familienfoto ---- */
+  $('photoFile').addEventListener('change',function(){
+    var f=this.files&&this.files[0];if(!f)return;
+    $('photoErr').textContent='Foto wird hochgeladen …';
+    resizeToJpeg(f,function(d){
+      call({op:'photo_put',data:d}).then(function(j){showPhoto(j.photo);$('photoErr').textContent='Foto gespeichert.'}).catch(function(){$('photoErr').textContent='Das Foto konnte nicht gespeichert werden.'});
+    },function(){$('photoErr').textContent='Das Bild konnte nicht gelesen werden.'});
+    this.value='';
+  });
+  $('photoDel').onclick=function(){call({op:'photo_del'}).then(function(){showPhoto(null);$('photoErr').textContent='Foto entfernt.'}).catch(function(){$('photoErr').textContent='Entfernen hat nicht geklappt.'})};
+
   /* ---- Outlook ---- */
   $('btnOutlook').onclick=function(){
     $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oModal').hidden=false;
@@ -474,6 +557,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();
   pass=load('fk-pass')||'';
+  (function(){var d=pass&&load('fk-photo');if(!d)return;showPhoto(d);var sp=$('splash');if(!sp)return;var im=document.createElement('img');im.className='pic';im.alt='';im.src=d;var svg=sp.querySelector('svg');sp.replaceChild(im,svg)})();
   if(pass){pull().then(startPolling)}else showLogin('');
 })();
 </script>

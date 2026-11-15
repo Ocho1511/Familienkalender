@@ -55,7 +55,7 @@ function cleanMember(m) {
   if (!m || !ID_RE.test(m.id || '')) return null;
   const name = str(m.name, 40).trim();
   if (!name) return null;
-  return { id: m.id, name, color: COLOR_RE.test(m.color || '') ? m.color : '#7d8a82', createdAt: Number(m.createdAt) || Date.now() };
+  return { id: m.id, name, color: COLOR_RE.test(m.color || '') ? m.color : '#7d8a82', createdAt: Number(m.createdAt) || Date.now(), order: Number.isFinite(Number(m.order)) && m.order !== undefined && m.order !== null ? Number(m.order) : undefined };
 }
 function cleanEvent(e) {
   if (!e || !ID_RE.test(e.id || '')) return null;
@@ -156,6 +156,25 @@ export default {
     if (body.op === 'ics') {
       if (!env.ICS_TOKEN) return reply({ error: 'Outlook-Link nicht eingerichtet' }, 500, c);
       return reply({ url: url.origin + '/ics?t=' + String(env.ICS_TOKEN).trim() }, 200, c);
+    }
+    if (body.op === 'reorder') {
+      const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
+      state.members.forEach((m) => { const i = ids.indexOf(m.id); if (i >= 0) m.order = i; });
+      await env.KV.put('state', JSON.stringify(state));
+      return reply({ members: state.members, events: state.events }, 200, c);
+    }
+    if (body.op === 'photo_get') {
+      return reply({ photo: (await env.KV.get('photo')) || null }, 200, c);
+    }
+    if (body.op === 'photo_put') {
+      const d = String(body.data || '');
+      if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(d) || d.length > 1500000) return reply({ error: 'Bild ungueltig oder zu gross' }, 400, c);
+      await env.KV.put('photo', d);
+      return reply({ photo: d }, 200, c);
+    }
+    if (body.op === 'photo_del') {
+      await env.KV.delete('photo');
+      return reply({ photo: null }, 200, c);
     }
     if (body.op === 'pull') return reply({ members: state.members, events: state.events }, 200, c);
 
