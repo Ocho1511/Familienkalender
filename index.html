@@ -167,6 +167,11 @@ body:has(.modal:not([hidden])){overflow:hidden}
 .pal{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 4px 2px}
 .pal .custom{flex-direction:row;align-items:center;gap:6px;margin-left:4px}
 .pal input[type="color"]{width:34px;height:30px;min-height:0;padding:0;border:1px solid var(--line);border-radius:6px;background:transparent}
+a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:center}
+.send{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.send .sub{margin-right:2px}
+.mnamebtn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--fg);text-align:left;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.mnamebtn[aria-expanded="true"]{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -298,6 +303,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     </label>
     <div class="sub" style="margin-top:-6px">Ohne Uhrzeit kommt die Erinnerung um 9 Uhr. Sie geht an die Person des Eintrags, bei „Alle" an alle.</div>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
+    <div id="evSendBox"></div>
     <div class="err" id="evErr" role="alert"></div>
     <div class="actions">
       <button class="btn danger" id="evDel" type="button" hidden>Löschen</button>
@@ -631,6 +637,26 @@ body:has(.modal:not([hidden])){overflow:hidden}
     }
   }
 
+  /* Mitteilen per WhatsApp, SMS oder E-Mail: öffnet die App des Handys mit fertigem Text (kein automatischer Versand) */
+  function phoneDigits(num){
+    var n=String(num||'').trim(),plus=n.charAt(0)==='+';n=n.replace(/[^0-9]/g,'');
+    if(!n)return '';if(plus)return n;if(n.indexOf('00')===0)return n.slice(2);if(n.charAt(0)==='0')return '49'+n.slice(1);return n;
+  }
+  function shareText(e){
+    return e.title+' – '+LONG.format(parse(e.start))+(e.time?', '+e.time+' Uhr':'')+(e.who&&memberOf(e.who)?' ('+nameOf(e)+')':'')+'. Familienkalender';
+  }
+  function sendBox(e){
+    var rec=e.who&&memberOf(e.who)?[memberOf(e.who)]:members;
+    var nums=rec.map(function(m){return phoneDigits(m.phone)}).filter(Boolean);
+    var mails=rec.map(function(m){return m.email}).filter(Boolean);
+    var t=encodeURIComponent(shareText(e)),box=el('div','send');
+    box.appendChild(el('span','sub','Mitteilen:'));
+    var wa=el('a','btn ghost sm','WhatsApp');wa.href='https://wa.me/'+(nums.length===1?nums[0]:'')+'?text='+t;wa.target='_blank';wa.rel='noopener';box.appendChild(wa);
+    var sm=el('a','btn ghost sm','SMS');sm.href='sms:'+nums.map(function(n){return '+'+n}).join(',')+'?&body='+t;box.appendChild(sm);
+    var ml=el('a','btn ghost sm','E-Mail');ml.href='mailto:'+mails.join(',')+'?subject='+encodeURIComponent('Termin: '+e.title)+'&body='+t;box.appendChild(ml);
+    return box;
+  }
+
   function item(e,showDate){
     var li=el('li','item');li.style.setProperty('--c',colorOf(e));
     var b=el('div','body');
@@ -641,6 +667,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     if(e.time)meta+=' · '+e.time+' Uhr';
     b.appendChild(el('div','m',meta));
     if(e.note)b.appendChild(el('div','note',e.note));
+    if(!e.virtual)b.appendChild(sendBox(e));
     li.appendChild(b);
     if(!e.virtual){var ed=el('button','btn ghost sm','Bearbeiten');ed.type='button';ed.onclick=function(){openEvent(e)};li.appendChild(ed)}
     return li;
@@ -680,6 +707,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     $('fTime').value=e&&e.time?e.time:'';
     $('fNote').value=e&&e.note?e.note:'';
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';
+    var sb=$('evSendBox');sb.textContent='';if(e)sb.appendChild(sendBox(e));
     $('evDel').hidden=!e;$('evDel').textContent='Löschen';$('evErr').textContent='';
     $('evModal').hidden=false;$('fTitle').focus();
   }
@@ -713,6 +741,12 @@ body:has(.modal:not([hidden])){overflow:hidden}
     });
   }
   var openPick=null,openData=null;
+  function removeMember(m){
+    var viaAdmin=function(){askAdmin(m.name+' entfernen',function(pw){return call({op:'del',kind:'member',id:m.id,admin:pw}).then(apply)})};
+    if(Date.now()-(m.createdAt||0)<15*60000){
+      call({op:'del',kind:'member',id:m.id}).then(apply).catch(function(e){if(e&&e.status===403)viaAdmin();else $('pErr').textContent='Entfernen hat nicht geklappt.'});
+    }else viaAdmin();
+  }
   function saveMember(m,patch){
     var item=Object.assign({},m,patch);
     return write({op:'put',kind:'member',item:item},$('pErr'));
@@ -734,17 +768,16 @@ body:has(.modal:not([hidden])){overflow:hidden}
       dot.setAttribute('aria-label','Farbe von '+m.name+' ändern');dot.setAttribute('aria-expanded',openPick===m.id?'true':'false');
       dot.onclick=function(){openPick=openPick===m.id?null:m.id;renderPeopleList()};
       n.appendChild(dot);
-      var nm=el('span','mname');nm.appendChild(document.createTextNode(m.name));
+      var nm=el('span','mname');var nb=el('button','mnamebtn',m.name);nb.type='button';nb.setAttribute('aria-expanded',openData===m.id?'true':'false');
+      nb.onclick=function(){openData=openData===m.id?null:m.id;renderPeopleList()};nm.appendChild(nb);
       var info=[];if(m.birthday)info.push('Geb. '+fmtBirthday(m.birthday));
       if(m.phone){var ph=el('a','minfo',m.phone);ph.href='tel:'+m.phone.replace(/[^0-9+]/g,'');nm.appendChild(ph)}
       if(info.length)nm.appendChild(el('span','minfo',info.join(' · ')));
       n.appendChild(nm);r.appendChild(n);
       var bt=el('span','mbtns');
-      var ed=el('button','btn ghost sm','Daten');ed.type='button';
-      ed.onclick=function(){openData=openData===m.id?null:m.id;renderPeopleList()};
       var d=el('button','btn danger sm','Entfernen');d.type='button';
-      d.onclick=function(){askAdmin(m.name+' entfernen',function(pw){return call({op:'del',kind:'member',id:m.id,admin:pw}).then(apply)})};
-      bt.appendChild(ed);bt.appendChild(d);r.appendChild(bt);wrap.appendChild(r);
+      d.onclick=function(){removeMember(m)};
+      bt.appendChild(d);r.appendChild(bt);wrap.appendChild(r);
       if(openPick===m.id){
         var pal=el('div','pal');
         COLORS.forEach(function(c){
@@ -765,7 +798,9 @@ body:has(.modal:not([hidden])){overflow:hidden}
             fb=field('Geburtstag','date',m.birthday,'md_bd_'+m.id),fe=field('E-Mail','email',m.email,'md_mail_'+m.id),fno=field('Notiz','area',m.note,'md_note_'+m.id);
         fn.input.required=true;fn.input.maxLength=40;fp.input.maxLength=30;fp.input.setAttribute('inputmode','tel');fe.input.maxLength=80;fno.input.maxLength=300;
         [fn,fp,fb,fe,fno].forEach(function(x){form.appendChild(x.lab)});
-        var act=el('div','actions'),sv=el('button','btn sm','Speichern');sv.type='submit';act.appendChild(sv);form.appendChild(act);
+        var act=el('div','actions'),sv=el('button','btn sm','Speichern');sv.type='submit';
+        var rm=el('button','btn danger sm','Person entfernen');rm.type='button';rm.onclick=function(){removeMember(m)};
+        act.appendChild(rm);act.appendChild(sv);form.appendChild(act);
         form.addEventListener('submit',function(ev){
           ev.preventDefault();
           saveMember(m,{name:fn.input.value.trim(),phone:fp.input.value.trim(),birthday:fb.input.value,email:fe.input.value.trim(),note:fno.input.value.trim()})
@@ -784,7 +819,8 @@ body:has(.modal:not([hidden])){overflow:hidden}
   $('pForm').addEventListener('submit',function(ev){
     ev.preventDefault();
     var name=$('pName').value.trim();if(!name)return;
-    write({op:'put',kind:'member',item:{id:uid(),name:name,color:pickColor,createdAt:Date.now()}},$('pErr')).then(function(){
+    var nid=uid();openData=nid;
+    write({op:'put',kind:'member',item:{id:nid,name:name,color:pickColor,createdAt:Date.now()}},$('pErr')).then(function(){
       $('pName').value='';$('pErr').textContent='';pickColor=COLORS[(members.length)%COLORS.length];renderSwatches();
     }).catch(function(){});
   });

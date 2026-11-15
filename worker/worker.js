@@ -314,7 +314,12 @@ export default {
       return reply({ photo: d }, 200, c);
     }
     // Loeschen nur mit separatem Loeschkennwort (ADMIN_PASSWORD), nicht mit dem Login-Passwort
-    if (body.op === 'photo_del' || body.op === 'del') {
+    // Eine gerade erst angelegte Person (unter 15 Minuten, Zeit vom Server) darf ohne Loeschkennwort wieder entfernt werden
+    const recentMember = body.op === 'del' && body.kind === 'member' && (() => {
+      const m = state.members.find((x) => x.id === body.id);
+      return !!m && Date.now() - (Number(m.createdAt) || 0) < 15 * 60000;
+    })();
+    if ((body.op === 'photo_del' || body.op === 'del') && !recentMember) {
       if (!env.ADMIN_PASSWORD) return reply({ error: 'Loeschkennwort nicht eingerichtet' }, 500, c);
       if (!(await sameText(str(body.admin, 200).trim(), String(env.ADMIN_PASSWORD).trim()))) {
         await addFail(env, ip);
@@ -335,6 +340,7 @@ export default {
         const item = isMember ? cleanMember(body.item) : cleanEvent(body.item);
         if (!item) return reply({ error: 'Ungueltige Daten' }, 400, c);
         const i = list.findIndex((x) => x.id === item.id);
+        if (isMember) item.createdAt = i >= 0 ? list[i].createdAt : Date.now(); // Anlegezeit nur der Server bestimmt
         if (i >= 0) list[i] = item;
         else {
           if (list.length >= (isMember ? MAX_MEMBERS : MAX_EVENTS)) return reply({ error: 'Limit erreicht' }, 413, c);
