@@ -43,6 +43,7 @@ button{cursor:pointer}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
 .cal-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .cal-head h2{font:600 20px var(--font-display);margin:0 auto 0 4px;text-transform:capitalize}
+.panel[aria-label="Monatsansicht"]{touch-action:pan-y}
 .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
 .dow{font-size:12px;color:var(--muted);text-align:center;padding:4px 0;text-transform:uppercase;letter-spacing:.06em}
 .day{min-height:78px;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:4px;text-align:left;
@@ -435,6 +436,15 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   $('prev').onclick=function(){view=new Date(view.getFullYear(),view.getMonth()-1,1);renderGrid()};
   $('next').onclick=function(){view=new Date(view.getFullYear(),view.getMonth()+1,1);renderGrid()};
   $('today').onclick=function(){view=new Date();view.setDate(1);selected=today;renderAll()};
+  /* Wischen: nach links = naechster Monat, nach rechts = voriger Monat */
+  (function(){
+    var box=$('grid').parentNode,sx=0,sy=0,st=0;
+    box.addEventListener('touchstart',function(e){var t=e.changedTouches[0];sx=t.clientX;sy=t.clientY;st=Date.now()},{passive:true});
+    box.addEventListener('touchend',function(e){
+      var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+      if(Date.now()-st<800&&Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5){$(dx<0?'next':'prev').click()}
+    },{passive:true});
+  })();
   document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true}});
 
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
