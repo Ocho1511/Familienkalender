@@ -74,8 +74,31 @@ button{cursor:pointer}
 }
 .dots{display:flex;flex-direction:column;gap:2px;min-width:0}
 @media(max-width:560px){.dots{flex-direction:row;flex-wrap:wrap}}
-.side{display:flex;flex-direction:column;gap:16px;min-width:0}
-.side h3{font:600 17px var(--font-display);margin:0 0 10px}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.fold.panel{padding:0}
+.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 14px;font:600 18px var(--font-display);user-select:none;-webkit-user-select:none}
+.fold>summary::-webkit-details-marker{display:none}
+.fold>summary::before{content:'▸';color:var(--accent);font-size:14px;transition:transform .15s}
+.fold[open]>summary::before{transform:rotate(90deg)}
+.fold-body{padding:0 14px 14px}
+.yeargrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 12px}
+@media(max-width:560px){.yeargrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.mini{min-width:0}
+.mini h4{margin:0 0 4px;font:600 13px var(--font-body);text-transform:capitalize}
+.mini .mg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
+.mini .dw{font-size:9px;color:var(--muted);text-align:center}
+.mini button{aspect-ratio:1;border:0;border-radius:4px;background:transparent;font-size:10px;padding:0;color:var(--fg);min-width:0}
+.mini button.has{font-weight:700}
+.mini button.today{outline:1.5px solid var(--accent)}
+.mini button.sel{box-shadow:inset 0 0 0 1.5px var(--fg)}
+.weeklist{display:flex;flex-direction:column;gap:6px}
+.wrow{display:grid;grid-template-columns:48px minmax(0,1fr);gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.wrow.today{background:var(--today)}
+.wrow.sel{outline:2px solid var(--accent);outline-offset:-2px}
+.wrow .wd{font-size:12px;color:var(--muted);line-height:1.2;cursor:pointer;background:none;border:0;text-align:left;padding:0}
+.wrow .wd b{display:block;font-size:16px;color:var(--fg)}
+.wrow .wev{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wrow .wev button{text-align:left;border:0;border-left:4px solid var(--c);background:color-mix(in srgb,var(--c) 18%,var(--surface));border-radius:4px;padding:3px 6px;font-size:13px;overflow-wrap:anywhere}
 .list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .item{display:flex;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;border-left:4px solid var(--c);min-width:0}
 .item .body{flex:1;min-width:0}
@@ -160,25 +183,64 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   <div class="people" id="filters" aria-label="Personen filtern"></div>
 
   <div class="main">
-    <section class="panel" aria-label="Monatsansicht">
-      <div class="cal-head">
-        <button class="btn ghost sm" id="prev" type="button" aria-label="Vorheriger Monat">‹</button>
-        <h2 id="monthTitle"></h2>
-        <button class="btn ghost sm" id="today" type="button">Heute</button>
-        <button class="btn ghost sm" id="next" type="button" aria-label="Nächster Monat">›</button>
-      </div>
-      <div class="grid" id="grid"></div>
-    </section>
+    <div class="col">
+      <details class="fold panel" data-fold="year" open>
+        <summary>Jahresübersicht</summary>
+        <div class="fold-body">
+          <div class="cal-head">
+            <button class="btn ghost sm" id="yPrev" type="button" aria-label="Vorheriges Jahr">‹</button>
+            <h2 id="yearTitle"></h2>
+            <button class="btn ghost sm" id="yToday" type="button">Dieses Jahr</button>
+            <button class="btn ghost sm" id="yNext" type="button" aria-label="Nächstes Jahr">›</button>
+          </div>
+          <div class="yeargrid" id="yearGrid"></div>
+        </div>
+      </details>
+      <details class="fold panel" data-fold="month" open>
+        <summary>Monatsübersicht</summary>
+        <div class="fold-body">
+          <div class="cal-head">
+            <button class="btn ghost sm" id="prev" type="button" aria-label="Vorheriger Monat">‹</button>
+            <h2 id="monthTitle"></h2>
+            <button class="btn ghost sm" id="today" type="button">Heute</button>
+            <button class="btn ghost sm" id="next" type="button" aria-label="Nächster Monat">›</button>
+          </div>
+          <div class="grid" id="grid"></div>
+        </div>
+      </details>
+    </div>
 
-    <div class="side">
-      <section class="panel">
-        <h3 id="dayTitle"></h3>
-        <ul class="list" id="dayList"></ul>
-      </section>
-      <section class="panel">
-        <h3>Demnächst</h3>
-        <ul class="list" id="soon"></ul>
-      </section>
+    <div class="col">
+      <details class="fold panel" data-fold="week" open>
+        <summary>Wochenübersicht</summary>
+        <div class="fold-body">
+          <div class="cal-head">
+            <button class="btn ghost sm" id="wPrev" type="button" aria-label="Vorherige Woche">‹</button>
+            <h2 id="weekTitle"></h2>
+            <button class="btn ghost sm" id="wToday" type="button">Diese Woche</button>
+            <button class="btn ghost sm" id="wNext" type="button" aria-label="Nächste Woche">›</button>
+          </div>
+          <div class="weeklist" id="weekList"></div>
+        </div>
+      </details>
+      <details class="fold panel" data-fold="day" open>
+        <summary>Tagesübersicht</summary>
+        <div class="fold-body">
+          <div class="cal-head">
+            <button class="btn ghost sm" id="dPrev" type="button" aria-label="Voriger Tag">‹</button>
+            <h2 id="dayTitle"></h2>
+            <button class="btn ghost sm" id="dToday" type="button">Heute</button>
+            <button class="btn ghost sm" id="dNext" type="button" aria-label="Nächster Tag">›</button>
+          </div>
+          <ul class="list" id="dayList"></ul>
+        </div>
+      </details>
+      <details class="fold panel" data-fold="soon" open>
+        <summary>Demnächst</summary>
+        <div class="fold-body">
+          <ul class="list" id="soon"></ul>
+        </div>
+      </details>
     </div>
   </div>
 </div>
@@ -408,6 +470,92 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     chip.addEventListener('pointermove',move);chip.addEventListener('pointerup',up);chip.addEventListener('pointercancel',up);
   }
 
+  /* Tagesfarbe nach Personen (Streifen bei mehreren) */
+  function dayBg(evs){
+    var cols=[];
+    evs.forEach(function(e){var cc=memberOf(e.who)?colorOf(e):null;if(cc&&cols.indexOf(cc)<0)cols.push(cc)});
+    if(!cols.length)return '';
+    var tint=function(x){return 'color-mix(in srgb,'+x+' 32%,var(--surface))'};
+    if(cols.length===1)return tint(cols[0]);
+    var step=100/cols.length;
+    return 'linear-gradient(105deg,'+cols.map(function(x,k){return tint(x)+' '+(k*step)+'% '+((k+1)*step)+'%'}).join(',')+')';
+  }
+
+  /* Jahresübersicht */
+  var yearView=new Date().getFullYear(),lastSel='';
+  var MONTHONLY=new Intl.DateTimeFormat('de-DE',{month:'long'});
+  function renderYear(){
+    $('yearTitle').textContent=String(yearView);
+    var g=$('yearGrid');g.textContent='';
+    for(var m=0;m<12;m++){(function(m){
+      var first=new Date(yearView,m,1),off=(first.getDay()+6)%7,dim=new Date(yearView,m+1,0).getDate();
+      var box=el('div','mini');box.appendChild(el('h4',null,MONTHONLY.format(first)));
+      var mg=el('div','mg');
+      ['M','D','M','D','F','S','S'].forEach(function(x){mg.appendChild(el('div','dw',x))});
+      for(var i=0;i<off;i++)mg.appendChild(el('span'));
+      for(var d=1;d<=dim;d++){(function(d){
+        var key=yearView+'-'+pad(m+1)+'-'+pad(d),evs=eventsOn(key);
+        var b=el('button',(evs.length?'has ':'')+(key===today?'today ':'')+(key===selected?'sel':''),String(d));
+        b.type='button';
+        var bgc=dayBg(evs);if(bgc)b.style.background=bgc;
+        b.setAttribute('aria-label',LONG.format(new Date(yearView,m,d))+', '+evs.length+' Einträge');
+        b.onclick=function(){selected=key;view=new Date(yearView,m,1);renderAll()};
+        mg.appendChild(b);
+      })(d)}
+      box.appendChild(mg);g.appendChild(box);
+    })(m)}
+  }
+
+  /* Wochenübersicht (Woche des gewählten Tages, Montag bis Sonntag) */
+  var DAYSHORT=new Intl.DateTimeFormat('de-DE',{day:'numeric',month:'short'});
+  var WDSHORT=new Intl.DateTimeFormat('de-DE',{weekday:'short'});
+  function isoWeekNo(d){
+    var t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())),dn=t.getUTCDay()||7;
+    t.setUTCDate(t.getUTCDate()+4-dn);
+    var y0=new Date(Date.UTC(t.getUTCFullYear(),0,1));
+    return Math.ceil(((t-y0)/86400000+1)/7);
+  }
+  function renderWeek(){
+    var ws=parse(selected);ws.setDate(ws.getDate()-((ws.getDay()+6)%7));
+    var we=new Date(ws);we.setDate(ws.getDate()+6);
+    $('weekTitle').textContent='KW '+isoWeekNo(ws)+' · '+DAYSHORT.format(ws)+' – '+DAYSHORT.format(we);
+    var l=$('weekList');l.textContent='';
+    for(var i=0;i<7;i++){(function(i){
+      var d=new Date(ws);d.setDate(ws.getDate()+i);var key=iso(d),evs=eventsOn(key);
+      var row=el('div','wrow'+(key===today?' today':'')+(key===selected?' sel':''));
+      var wd=el('button','wd',WDSHORT.format(d).replace('.',''));wd.type='button';
+      wd.appendChild(el('b',null,String(d.getDate())));
+      wd.onclick=function(){selected=key;view=new Date(d.getFullYear(),d.getMonth(),1);renderAll()};
+      row.appendChild(wd);
+      var box=el('div','wev');
+      if(!evs.length)box.appendChild(el('span','empty','–'));
+      evs.forEach(function(e){
+        var b=el('button',null,(e.time?e.time+' ':'')+e.title+' · '+nameOf(e));b.type='button';b.style.setProperty('--c',colorOf(e));
+        b.onclick=function(){openEvent(e)};box.appendChild(b);
+      });
+      row.appendChild(box);l.appendChild(row);
+    })(i)}
+  }
+  function shiftSel(n){var d=parse(selected);d.setDate(d.getDate()+n);selected=iso(d);view=new Date(d.getFullYear(),d.getMonth(),1);renderAll()}
+  function goToday(){selected=today;view=new Date();view.setDate(1);renderAll()}
+  $('yPrev').onclick=function(){yearView--;renderYear()};
+  $('yNext').onclick=function(){yearView++;renderYear()};
+  $('yToday').onclick=function(){yearView=new Date().getFullYear();renderYear()};
+  $('wPrev').onclick=function(){shiftSel(-7)};
+  $('wNext').onclick=function(){shiftSel(7)};
+  $('wToday').onclick=goToday;
+  $('dPrev').onclick=function(){shiftSel(-1)};
+  $('dNext').onclick=function(){shiftSel(1)};
+  $('dToday').onclick=goToday;
+
+  /* Abschnitte einklappbar, Zustand nur auf diesem Gerät gemerkt (Standard offen) */
+  Array.prototype.forEach.call(document.querySelectorAll('details.fold[data-fold]'),function(d){
+    var key='fk-fold-'+d.dataset.fold;
+    var st=load(key);
+    d.open=st===null?!(d.dataset.fold==='year'&&window.innerWidth<560):st!=='0'; // Jahr ist auf dem Handy zunächst zu, weil es lang ist
+    d.querySelector('summary').addEventListener('click',function(){store(key,d.open?'0':'1')});
+  });
+
   function renderGrid(){
     $('monthTitle').textContent=MONTH.format(view);
     var g=$('grid');g.textContent='';
@@ -423,13 +571,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
       c.type='button';
       c.appendChild(el('span','n',String(d.getDate())));
       var evs=eventsOn(key),dots=el('div','dots');
-      var cols=[];
-      evs.forEach(function(e){var cc=memberOf(e.who)?colorOf(e):null;if(cc&&cols.indexOf(cc)<0)cols.push(cc)});
-      if(cols.length){
-        var tint=function(x){return 'color-mix(in srgb,'+x+' 32%,var(--surface))'};
-        if(cols.length===1)c.style.background=tint(cols[0]);
-        else{var step=100/cols.length,parts=cols.map(function(x,k){return tint(x)+' '+(k*step)+'% '+((k+1)*step)+'%'});c.style.background='linear-gradient(105deg,'+parts.join(',')+')'}
-      }
+      var bgc=dayBg(evs);if(bgc)c.style.background=bgc;
       evs.slice(0,3).forEach(function(e){var x=el('span','ev',(e.time?e.time+' ':'')+e.title);x.style.setProperty('--c',colorOf(e));dots.appendChild(x)});
       c.appendChild(dots);
       if(evs.length>3)c.appendChild(el('span','more','+'+(evs.length-3)+' weitere'));
@@ -466,7 +608,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     up.forEach(function(e){s.appendChild(item(e,true))});
   }
 
-  function renderAll(){renderFilters();renderGrid();renderSide();refreshStatus();if(!$('pModal').hidden)renderPeopleList()}
+  function renderAll(){if(selected!==lastSel){lastSel=selected;yearView=parse(selected).getFullYear()}renderFilters();renderYear();renderGrid();renderWeek();renderSide();refreshStatus();if(!$('pModal').hidden)renderPeopleList()}
 
   /* ---- Eintrag ---- */
   function fillWho(sel){
