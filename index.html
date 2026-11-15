@@ -97,34 +97,40 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 .login{max-width:360px;margin:12vh auto 0}
 #photoBox{border-radius:16px;overflow:hidden;border:1px solid var(--line)}
 #photoBox img{display:block;width:100%;height:clamp(140px,28vw,240px);object-fit:cover}
-#splash .pic{width:132px;height:132px;border-radius:50%;object-fit:cover;border:4px solid var(--surface);box-shadow:0 4px 18px rgba(0,0,0,.25);animation:pop .7s cubic-bezier(.2,.9,.3,1.2) both}
-#splash{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
-  transition:opacity .5s ease,visibility .5s}
+#splash{position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+  padding:env(safe-area-inset-top,0px) 24px env(safe-area-inset-bottom,0px);text-align:center;color:#fff;
+  background:radial-gradient(120% 80% at 50% 36%,#3b8a70 0%,#24604d 48%,#10261f 100%);
+  transition:opacity .6s ease,visibility .6s}
 #splash.out{opacity:0;visibility:hidden}
-#splash svg{width:132px;height:132px;animation:pop .7s cubic-bezier(.2,.9,.3,1.2) both}
-#splash .name{font:600 30px/1 var(--font-display);letter-spacing:.01em;animation:rise .7s .15s ease both}
-#splash .dots i{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px;animation:rise .7s ease both}
-@keyframes pop{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
-@keyframes rise{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
-@media (prefers-reduced-motion:reduce){#splash svg,#splash .name,#splash .dots i{animation:none}#splash{transition:none}}
+#splash .mark{width:min(58vw,240px);height:auto;filter:drop-shadow(0 14px 28px rgba(0,0,0,.35));animation:pop .8s cubic-bezier(.2,.9,.3,1.15) both}
+#splash .fig{transform-box:fill-box;transform-origin:50% 100%;animation:grow .6s cubic-bezier(.2,.9,.3,1.3) both}
+#splash .fig:nth-of-type(2){animation-delay:.45s}#splash .fig:nth-of-type(3){animation-delay:.58s}
+#splash .fig:nth-of-type(4){animation-delay:.71s}#splash .fig:nth-of-type(5){animation-delay:.84s}
+#splash .name{font:600 clamp(30px,9vw,42px)/1.05 var(--font-display);letter-spacing:.01em;animation:rise .7s .5s ease both}
+#splash .claim{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.72);margin-top:-14px;animation:rise .7s .7s ease both}
+#splash .pic{width:min(58vw,240px);height:min(58vw,240px);border-radius:50%;object-fit:cover;border:5px solid rgba(255,255,255,.9);box-shadow:0 14px 30px rgba(0,0,0,.4);animation:pop .8s cubic-bezier(.2,.9,.3,1.15) both}
+@keyframes pop{from{transform:scale(.75);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes rise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+@keyframes grow{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){#splash *{animation:none!important}#splash{transition:none}}
 </style>
 </head>
 <body>
 <div id="splash" aria-hidden="true">
-  <svg viewBox="0 0 128 128" role="img" aria-label="Familienkalender">
-    <rect x="10" y="18" width="108" height="100" rx="20" fill="var(--surface)" stroke="var(--line)" stroke-width="3"/>
-    <path d="M10 56V38a20 20 0 0 1 20-20h68a20 20 0 0 1 20 20v18z" fill="var(--accent)"/>
-    <rect x="34" y="6" width="9" height="26" rx="4.5" fill="var(--fg)"/>
-    <rect x="85" y="6" width="9" height="26" rx="4.5" fill="var(--fg)"/>
-    <circle cx="44" cy="76" r="10" fill="#3f6fb5"/>
-    <circle cx="84" cy="76" r="10" fill="#c24f7b"/>
-    <circle cx="44" cy="100" r="10" fill="#d1603d"/>
-    <circle cx="84" cy="100" r="10" fill="#2f6b57"/>
+  <svg class="mark" viewBox="0 0 160 160" role="img" aria-label="Familienkalender">
+    <rect x="14" y="26" width="132" height="122" rx="28" fill="#fbfaf6"/>
+    <path d="M14 66V54a28 28 0 0 1 28-28h76a28 28 0 0 1 28 28v12z" fill="#f2b84b"/>
+    <rect x="44" y="12" width="10" height="28" rx="5" fill="#fbfaf6" stroke="#10261f" stroke-width="3"/>
+    <rect x="106" y="12" width="10" height="28" rx="5" fill="#fbfaf6" stroke="#10261f" stroke-width="3"/>
+    <g fill="#d7ddd6"><rect x="30" y="80" width="12" height="6" rx="3"/><rect x="50" y="80" width="12" height="6" rx="3"/><rect x="70" y="80" width="12" height="6" rx="3"/><rect x="90" y="80" width="12" height="6" rx="3"/><rect x="110" y="80" width="12" height="6" rx="3"/></g>
+    <g class="fig"><circle cx="40" cy="105" r="8" fill="#3f6fb5"/><path d="M28 134a12 12 0 0 1 24 0z" fill="#3f6fb5"/></g>
+    <g class="fig"><circle cx="66" cy="105" r="8" fill="#c24f7b"/><path d="M54 134a12 12 0 0 1 24 0z" fill="#c24f7b"/></g>
+    <g class="fig"><circle cx="93" cy="97" r="10" fill="#d1603d"/><path d="M79 134a14 14 0 0 1 28 0z" fill="#d1603d"/></g>
+    <g class="fig"><circle cx="122" cy="97" r="10" fill="#2f6b57"/><path d="M108 134a14 14 0 0 1 28 0z" fill="#2f6b57"/></g>
   </svg>
   <div class="name">Familienkalender</div>
-  <div class="dots"><i style="background:#3f6fb5"></i><i style="background:#c24f7b;animation-delay:.1s"></i><i style="background:#d1603d;animation-delay:.2s"></i><i style="background:#2f6b57;animation-delay:.3s"></i></div>
+  <div class="claim">Alle Termine. Eine Familie.</div>
 </div>
-
 <div class="wrap">
   <div id="photoBox" hidden><img id="photoImg" alt="Familienfoto"></div>
   <header>
@@ -577,7 +583,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   })();
   document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true}});
 
-  setTimeout(function(){var sp=$('splash');if(!sp)return;sp.classList.add('out');setTimeout(function(){sp.parentNode&&sp.parentNode.removeChild(sp)},600)},1500);
+  setTimeout(function(){var sp=$('splash');if(!sp)return;sp.classList.add('out');setTimeout(function(){sp.parentNode&&sp.parentNode.removeChild(sp)},700)},2000);
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();
   pass=load('fk-pass')||'';
