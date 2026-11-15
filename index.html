@@ -147,6 +147,16 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 @keyframes rise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
 @keyframes grow{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
 @media (prefers-reduced-motion:reduce){#splash *{animation:none!important}#splash{transition:none}}
+/* iPhone: Formulare passen auf den Bildschirm */
+body{padding-top:calc(20px + env(safe-area-inset-top,0px));padding-bottom:calc(40px + env(safe-area-inset-bottom,0px))}
+input,select,textarea{font-size:16px}
+input[type="date"],input[type="time"]{-webkit-appearance:none;appearance:none;display:block;width:100%;min-width:0;max-width:100%;min-height:42px;text-align:left}
+input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date-and-time-value{text-align:left;min-height:1.2em}
+.row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.modal{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding-bottom:max(16px,env(safe-area-inset-bottom,0px))}
+.sheet{margin-top:max(8px,2vh);margin-bottom:16px;min-width:0}
+#evForm .actions{position:sticky;bottom:0;background:var(--surface);padding-top:10px}
+body:has(.modal:not([hidden])){overflow:hidden}
 </style>
 </head>
 <body>
@@ -613,7 +623,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   /* ---- Eintrag ---- */
   function fillWho(sel){
     var w=$('fWho');w.textContent='';
-    var o=el('option',null,'Alle gemeinsam');o.value='';w.appendChild(o);
+    var o=el('option',null,'Alle');o.value='';w.appendChild(o);
     members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
     w.value=sel||'';
   }
