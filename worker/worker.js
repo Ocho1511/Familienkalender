@@ -23,7 +23,7 @@ function cors(request, env) {
   const ok = origins(env).includes(o) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o);
   return {
     'Access-Control-Allow-Origin': ok ? o : origins(env)[0],
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Vary': 'Origin',
   };
@@ -51,23 +51,124 @@ async function addFail(env, ip) {
   await env.KV.put('fail:' + ip, String(n), { expirationTtl: 3600 });
 }
 
+const REMINDS = [0, 15, 30, 60, 120, 1440, 2880];
 function cleanMember(m) {
   if (!m || !ID_RE.test(m.id || '')) return null;
   const name = str(m.name, 40).trim();
   if (!name) return null;
-  return { id: m.id, name, color: COLOR_RE.test(m.color || '') ? m.color : '#7d8a82', createdAt: Number(m.createdAt) || Date.now(), order: Number.isFinite(Number(m.order)) && m.order !== undefined && m.order !== null ? Number(m.order) : undefined };
+  const email = str(m.email, 80).trim();
+  return {
+    id: m.id, name, color: COLOR_RE.test(m.color || '') ? m.color : '#7d8a82', createdAt: Number(m.createdAt) || Date.now(),
+    order: Number.isFinite(Number(m.order)) && m.order !== undefined && m.order !== null ? Number(m.order) : undefined,
+    phone: str(m.phone, 30).replace(/[^0-9+()\/\s.-]/g, '').trim(),
+    birthday: DATE_RE.test(m.birthday || '') ? m.birthday : '',
+    email: /^[^\s@]+@[^\s@]+$/.test(email) ? email : '',
+    note: str(m.note, 300).trim(),
+  };
 }
 function cleanEvent(e) {
   if (!e || !ID_RE.test(e.id || '')) return null;
   const title = str(e.title, 120).trim();
   if (!title || !DATE_RE.test(e.start || '')) return null;
   const end = DATE_RE.test(e.end || '') && e.end >= e.start ? e.end : '';
+  const hasRemind = e.remind !== null && e.remind !== undefined && e.remind !== '' && REMINDS.includes(Number(e.remind));
   return {
     id: e.id, title, who: ID_RE.test(e.who || '') ? e.who : '',
     cat: CATS.includes(e.cat) ? e.cat : 'Termin',
     start: e.start, end, time: TIME_RE.test(e.time || '') ? e.time : '',
     note: str(e.note, 500).trim(), createdAt: Number(e.createdAt) || Date.now(),
+    remind: hasRemind ? Number(e.remind) : undefined,
   };
+}
+
+// ---- Push-Erinnerungen: Web Push ohne Nutzlast, die Meldung holt der Service Worker unter /pending ab ----
+function b64u(input) {
+  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input);
+  let t = '';
+  bytes.forEach((x) => { t += String.fromCharCode(x); });
+  return btoa(t).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function sha256hex(t) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+// "2026-11-20" + "09:00" (deutsche Ortszeit) -> Millisekunden UTC
+function berlinToUtc(dateStr, timeStr) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const [h, mi] = timeStr.split(':').map(Number);
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const offsetAt = (ts) => {
+    const o = {};
+    fmt.formatToParts(new Date(ts)).forEach((p) => { o[p.type] = p.value; });
+    return Date.UTC(+o.year, +o.month - 1, +o.day, +o.hour, +o.minute, +o.second) - ts;
+  };
+  let ts = guess - offsetAt(guess);
+  ts = guess - offsetAt(ts);
+  return ts;
+}
+async function vapidAuth(env, endpoint) {
+  const claims = { aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'https://ocho1511.github.io/Familienkalender/' };
+  const input = b64u(JSON.stringify({ typ: 'JWT', alg: 'ES256' })) + '.' + b64u(JSON.stringify(claims));
+  const key = await crypto.subtle.importKey('jwk', JSON.parse(String(env.VAPID_PRIVATE).slice(String(env.VAPID_PRIVATE).indexOf('{'))), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, new TextEncoder().encode(input));
+  return 'vapid t=' + input + '.' + b64u(sig) + ', k=' + env.VAPID_PUBLIC;
+}
+async function sendPush(env, hash, endpoint, messages) {
+  if (messages && messages.length) {
+    const key = 'pend:' + hash;
+    const cur = (await env.KV.get(key, 'json')) || [];
+    await env.KV.put(key, JSON.stringify(cur.concat(messages).slice(-8)), { expirationTtl: 3600 });
+  }
+  const r = await fetch(endpoint, { method: 'POST', headers: { TTL: '3600', Urgency: 'high', Authorization: await vapidAuth(env, endpoint) } });
+  return r.status;
+}
+function leadText(min) {
+  if (min === 0) return 'jetzt';
+  if (min < 60) return 'in ' + min + ' Min.';
+  if (min < 1440) return 'in ' + min / 60 + ' Std.';
+  return 'in ' + min / 1440 + (min >= 2880 ? ' Tagen' : ' Tag');
+}
+async function runReminders(env) {
+  const now = Date.now();
+  let last = Number(await env.KV.get('lastrun')) || now - 5 * 60000;
+  if (now - last > 3600000) last = now - 3600000;
+  const state = (await env.KV.get('state', 'json')) || { members: [], events: [] };
+  const subs = (await env.KV.get('subs', 'json')) || {};
+  const hashes = Object.keys(subs);
+  const names = {};
+  (state.members || []).forEach((m) => { names[m.id] = m.name; });
+  const outbox = {};
+  const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
+
+  for (const e of state.events || []) {
+    if (e.remind === undefined || e.remind === null) continue;
+    const t = berlinToUtc(e.start, e.time || '09:00') - e.remind * 60000;
+    if (!(t > last && t <= now)) continue;
+    const dk = 'sent:' + e.id + ':' + t;
+    if (await env.KV.get(dk)) continue;
+    await env.KV.put(dk, '1', { expirationTtl: 172800 });
+    const who = e.who && names[e.who] ? names[e.who] : 'Alle';
+    add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) });
+  }
+  const year = new Date(now + 3600000).getUTCFullYear();
+  for (const m of state.members || []) {
+    if (!m.birthday) continue;
+    const t = berlinToUtc(year + m.birthday.slice(4), '09:00');
+    if (!(t > last && t <= now)) continue;
+    const dk = 'sentb:' + m.id + ':' + year;
+    if (await env.KV.get(dk)) continue;
+    await env.KV.put(dk, '1', { expirationTtl: 172800 });
+    const age = year - Number(m.birthday.slice(0, 4));
+    add('', { title: 'Geburtstag', body: 'Heute hat ' + m.name + ' Geburtstag' + (age > 0 && age < 120 ? ' (' + age + ')' : '') });
+  }
+  let changed = false;
+  for (const h of Object.keys(outbox)) {
+    const st = await sendPush(env, h, subs[h].endpoint, outbox[h]).catch(() => 0);
+    if (st === 404 || st === 410) { delete subs[h]; changed = true; }
+  }
+  if (changed) await env.KV.put('subs', JSON.stringify(subs));
+  await env.KV.put('lastrun', String(now));
 }
 
 // ---- Outlook-Abo (iCalendar-Feed, nur lesend) ----
@@ -115,6 +216,12 @@ function buildIcs(state) {
     if (e.note) L.push('DESCRIPTION:' + icsEsc(e.note));
     L.push('END:VEVENT');
   });
+  (state.members || []).forEach((m) => {
+    if (!m.birthday) return;
+    L.push('BEGIN:VEVENT', 'UID:bd-' + m.id + '@familienkalender', 'DTSTAMP:' + stamp,
+      'DTSTART;VALUE=DATE:' + d8(m.birthday), 'DTEND;VALUE=DATE:' + d8(nextDay(m.birthday)), 'RRULE:FREQ=YEARLY',
+      'SUMMARY:' + icsEsc('Geburtstag: ' + m.name), 'CATEGORIES:Geburtstag', 'END:VEVENT');
+  });
   L.push('END:VCALENDAR');
   return L.map(icsFold).join('\r\n') + '\r\n';
 }
@@ -125,6 +232,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: c });
 
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/pending') {
+      const h = url.searchParams.get('h') || '';
+      if (!env.KV || !/^[0-9a-f]{64}$/.test(h)) return reply({ items: [] }, 200, c);
+      const items = (await env.KV.get('pend:' + h, 'json')) || [];
+      if (items.length) await env.KV.delete('pend:' + h);
+      return reply({ items }, 200, c);
+    }
     if (request.method === 'GET' && url.pathname === '/ics') {
       const ip0 = request.headers.get('CF-Connecting-IP') || 'anon';
       if (!env.KV || !env.ICS_TOKEN) return new Response('nicht eingerichtet', { status: 500 });
@@ -153,6 +267,33 @@ export default {
     state.members = state.members || [];
     state.events = state.events || [];
 
+    if (body.op === 'push_sub') {
+      const ep = String((body.sub && body.sub.endpoint) || '');
+      if (!/^https:\/\/[^\s]{10,500}$/.test(ep)) return reply({ error: 'Ungueltiges Abo' }, 400, c);
+      const mid = ID_RE.test(body.memberId || '') ? body.memberId : '';
+      const subs = (await env.KV.get('subs', 'json')) || {};
+      const h = await sha256hex(ep);
+      if (!subs[h] && Object.keys(subs).length >= 40) return reply({ error: 'Limit erreicht' }, 413, c);
+      subs[h] = { endpoint: ep, memberId: mid };
+      await env.KV.put('subs', JSON.stringify(subs));
+      return reply({ ok: true, count: Object.keys(subs).length }, 200, c);
+    }
+    if (body.op === 'push_unsub') {
+      const subs = (await env.KV.get('subs', 'json')) || {};
+      const h = await sha256hex(String(body.endpoint || ''));
+      if (subs[h]) { delete subs[h]; await env.KV.put('subs', JSON.stringify(subs)); }
+      return reply({ ok: true }, 200, c);
+    }
+    if (body.op === 'push_test') {
+      if (!env.VAPID_PRIVATE || !env.VAPID_PUBLIC) return reply({ error: 'Push nicht eingerichtet' }, 500, c);
+      const subs = (await env.KV.get('subs', 'json')) || {};
+      const ep = String(body.endpoint || '');
+      const h = await sha256hex(ep);
+      if (!subs[h]) return reply({ error: 'Dieses Geraet ist nicht angemeldet' }, 404, c);
+      const st = await sendPush(env, h, ep, [{ title: 'Familienkalender', body: 'So sehen Erinnerungen aus.' }]).catch((e) => 'Fehler: ' + (e && e.message ? e.message : e));
+      if (st === 404 || st === 410) { delete subs[h]; await env.KV.put('subs', JSON.stringify(subs)); }
+      return reply({ status: st }, 200, c);
+    }
     if (body.op === 'ics') {
       if (!env.ICS_TOKEN) return reply({ error: 'Outlook-Link nicht eingerichtet' }, 500, c);
       return reply({ url: url.origin + '/ics?t=' + String(env.ICS_TOKEN).trim() }, 200, c);
@@ -208,4 +349,8 @@ export default {
     }
     return reply({ error: 'op?' }, 400, c);
   },
+  async scheduled(event, env, ctx) {
+    if (env.KV && env.VAPID_PRIVATE && env.VAPID_PUBLIC) ctx.waitUntil(runReminders(env));
+  },
 };
+

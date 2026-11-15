@@ -12,3 +12,10 @@ id = "aa44719ca9664acbaacf040d6238548b"
 # Passwort setzen mit
 #   npx wrangler secret put FAMILY_PASSWORD
 
+
+# Push-Erinnerungen: Zeitplan alle 5 Minuten, oeffentlicher VAPID-Schluessel (der private ist Secret VAPID_PRIVATE)
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+VAPID_PUBLIC = "BHF_Fg3DwHowO7VMl2pkrwk1ydRZtKzh4YXEIvfGVEQnZhUiEctkiNtfdH5wYHFbS-282kp3dQaf-6xYVffi4ko"

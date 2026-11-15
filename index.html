@@ -158,6 +158,10 @@ input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date
 #evForm .actions{position:sticky;bottom:0;background:var(--surface);padding-top:10px}
 body:has(.modal:not([hidden])){overflow:hidden}
 .memwrap{display:flex;flex-direction:column;gap:6px}
+.minfo{display:block;font-size:12px;color:var(--muted);font-weight:400;text-decoration:none;overflow-wrap:anywhere}
+.mname{display:flex;flex-direction:column;min-width:0}
+.mbtns{display:flex;gap:6px;flex:none}
+.mdata{display:flex;flex-direction:column;gap:8px;padding:6px 4px 2px}
 .dotbtn{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);background:var(--c);padding:0;flex:none;cursor:pointer}
 .dotbtn[aria-expanded="true"]{border-color:var(--fg)}
 .pal{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 4px 2px}
@@ -190,6 +194,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
       <div class="sub" id="status">Wird geladen …</div>
     </div>
     <div class="actions">
+      <button class="btn ghost" id="btnRemind" type="button">Erinnerungen</button>
       <button class="btn ghost" id="btnOutlook" type="button">Outlook</button>
       <button class="btn ghost" id="btnPeople" type="button">Personen</button>
       <button class="btn" id="btnAdd" type="button">+ Eintrag</button>
@@ -284,6 +289,14 @@ body:has(.modal:not([hidden])){overflow:hidden}
       <label for="fEnd">Bis (optional) <input id="fEnd" type="date"></label>
     </div>
     <label for="fTime">Uhrzeit (optional) <input id="fTime" type="time"></label>
+    <label for="fRemind">Erinnerung aufs Handy
+      <select id="fRemind">
+        <option value="">Keine</option><option value="0">Zum Zeitpunkt</option><option value="15">15 Minuten vorher</option>
+        <option value="30">30 Minuten vorher</option><option value="60">1 Stunde vorher</option><option value="120">2 Stunden vorher</option>
+        <option value="1440">1 Tag vorher</option><option value="2880">2 Tage vorher</option>
+      </select>
+    </label>
+    <div class="sub" style="margin-top:-6px">Ohne Uhrzeit kommt die Erinnerung um 9 Uhr. Sie geht an die Person des Eintrags, bei „Alle" an alle.</div>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
     <div class="err" id="evErr" role="alert"></div>
     <div class="actions">
@@ -330,6 +343,18 @@ body:has(.modal:not([hidden])){overflow:hidden}
   </div>
 </div>
 
+<div class="modal" id="rModal" hidden>
+  <div class="sheet">
+    <h2>Erinnerungen aufs Handy</h2>
+    <p class="sub" id="rInfo" style="margin:0"></p>
+    <label for="rWho">Dieses Handy gehört zu <select id="rWho"></select></label>
+    <div class="actions"><button class="btn" id="rOn" type="button">Auf diesem Gerät einschalten</button></div>
+    <div class="actions"><button class="btn ghost sm" id="rTest" type="button">Test senden</button><button class="btn danger sm" id="rOff" type="button">Ausschalten</button></div>
+    <div class="err" id="rMsg" role="alert"></div>
+    <div class="actions"><button class="btn ghost" id="rClose" type="button">Schließen</button></div>
+  </div>
+</div>
+
 <div class="modal" id="aModal" hidden style="z-index:30">
   <form class="sheet login" id="aForm" autocomplete="off">
     <h2 id="aTitle">Löschen</h2>
@@ -372,8 +397,17 @@ body:has(.modal:not([hidden])){overflow:hidden}
   function nameOf(ev){var m=memberOf(ev.who);return m?m.name:'Alle'}
   function endOf(ev){return ev.end&&ev.end>=ev.start?ev.end:ev.start}
   function visible(ev){return !(ev.who&&hidden[ev.who])}
+  function bdEvents(key){
+    var md=key.slice(5),y=+key.slice(0,4),out=[];
+    members.forEach(function(m){
+      if(!m.birthday||m.birthday.slice(5)!==md||hidden[m.id])return;
+      var by=+m.birthday.slice(0,4),age=(by>1900&&y>by)?' ('+(y-by)+')':'';
+      out.push({id:'bd-'+m.id+'-'+key,title:'Geburtstag: '+m.name+age,who:m.id,cat:'Geburtstag',start:key,end:'',time:'',note:'',virtual:true});
+    });
+    return out;
+  }
   function eventsOn(d){
-    return events.filter(function(e){return visible(e)&&e.start<=d&&d<=endOf(e)})
+    return events.filter(function(e){return visible(e)&&e.start<=d&&d<=endOf(e)}).concat(bdEvents(d))
       .sort(function(a,b){return (a.time||'99:99')<(b.time||'99:99')?-1:1});
   }
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
@@ -608,7 +642,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     b.appendChild(el('div','m',meta));
     if(e.note)b.appendChild(el('div','note',e.note));
     li.appendChild(b);
-    var ed=el('button','btn ghost sm','Bearbeiten');ed.type='button';ed.onclick=function(){openEvent(e)};li.appendChild(ed);
+    if(!e.virtual){var ed=el('button','btn ghost sm','Bearbeiten');ed.type='button';ed.onclick=function(){openEvent(e)};li.appendChild(ed)}
     return li;
   }
 
@@ -619,7 +653,8 @@ body:has(.modal:not([hidden])){overflow:hidden}
     if(!evs.length)l.appendChild(el('li','empty','Keine Einträge an diesem Tag.'));
     evs.forEach(function(e){l.appendChild(item(e,false))});
     var s=$('soon');s.textContent='';
-    var up=events.filter(function(e){return visible(e)&&endOf(e)>=today}).sort(function(a,b){return a.start<b.start?-1:a.start>b.start?1:0}).slice(0,8);
+    var bds=[];for(var di=0;di<60;di++){var dd=new Date();dd.setDate(dd.getDate()+di);bds=bds.concat(bdEvents(iso(dd)))}
+    var up=events.filter(function(e){return visible(e)&&endOf(e)>=today}).concat(bds).sort(function(a,b){return a.start<b.start?-1:a.start>b.start?1:0}).slice(0,8);
     if(!up.length)s.appendChild(el('li','empty',loaded?'Noch nichts geplant.':'Wird geladen …'));
     up.forEach(function(e){s.appendChild(item(e,true))});
   }
@@ -634,6 +669,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     w.value=sel||'';
   }
   function openEvent(e){
+    if(e&&e.virtual)return;
     editing=e||null;
     $('evHead').textContent=e?'Eintrag bearbeiten':'Neuer Eintrag';
     fillWho(e?e.who:(load('fk-me')||''));
@@ -643,6 +679,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     $('fEnd').value=e&&e.end?e.end:'';
     $('fTime').value=e&&e.time?e.time:'';
     $('fNote').value=e&&e.note?e.note:'';
+    $('fRemind').value=e&&e.remind!=null?String(e.remind):'';
     $('evDel').hidden=!e;$('evDel').textContent='Löschen';$('evErr').textContent='';
     $('evModal').hidden=false;$('fTitle').focus();
   }
@@ -655,6 +692,7 @@ body:has(.modal:not([hidden])){overflow:hidden}
     var start=$('fStart').value,end=$('fEnd').value;
     if(end&&end<start){$('evErr').textContent='Das Enddatum liegt vor dem Startdatum.';return}
     var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:end,time:$('fTime').value,note:$('fNote').value.trim(),
+      remind:$('fRemind').value===''?null:Number($('fRemind').value),
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
     if(data.who)store('fk-me',data.who);
@@ -674,10 +712,18 @@ body:has(.modal:not([hidden])){overflow:hidden}
       b.onclick=function(){pickColor=c;renderSwatches()};s.appendChild(b);
     });
   }
-  var openPick=null;
-  function saveMemberColor(m,c){
-    write({op:'put',kind:'member',item:{id:m.id,name:m.name,color:c,createdAt:m.createdAt,order:m.order}},$('pErr')).catch(function(){});
+  var openPick=null,openData=null;
+  function saveMember(m,patch){
+    var item=Object.assign({},m,patch);
+    return write({op:'put',kind:'member',item:item},$('pErr'));
   }
+  function saveMemberColor(m,c){saveMember(m,{color:c}).catch(function(){})}
+  function field(lab,type,val,id){
+    var l=el('label',null,lab),i=document.createElement(type==='area'?'textarea':'input');
+    if(type!=='area')i.type=type;else i.rows=2;
+    i.value=val||'';i.id=id;l.appendChild(i);return {lab:l,input:i};
+  }
+  function fmtBirthday(b){var d=parse(b);return pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYear()}
   function renderPeopleList(){
     var l=$('pList');l.textContent='';
     if(!members.length)l.appendChild(el('div','empty','Noch niemand angelegt.'));
@@ -687,10 +733,18 @@ body:has(.modal:not([hidden])){overflow:hidden}
       var dot=el('button','dotbtn');dot.type='button';dot.style.setProperty('--c',m.color);
       dot.setAttribute('aria-label','Farbe von '+m.name+' ändern');dot.setAttribute('aria-expanded',openPick===m.id?'true':'false');
       dot.onclick=function(){openPick=openPick===m.id?null:m.id;renderPeopleList()};
-      n.appendChild(dot);n.appendChild(document.createTextNode(m.name));r.appendChild(n);
+      n.appendChild(dot);
+      var nm=el('span','mname');nm.appendChild(document.createTextNode(m.name));
+      var info=[];if(m.birthday)info.push('Geb. '+fmtBirthday(m.birthday));
+      if(m.phone){var ph=el('a','minfo',m.phone);ph.href='tel:'+m.phone.replace(/[^0-9+]/g,'');nm.appendChild(ph)}
+      if(info.length)nm.appendChild(el('span','minfo',info.join(' · ')));
+      n.appendChild(nm);r.appendChild(n);
+      var bt=el('span','mbtns');
+      var ed=el('button','btn ghost sm','Daten');ed.type='button';
+      ed.onclick=function(){openData=openData===m.id?null:m.id;renderPeopleList()};
       var d=el('button','btn danger sm','Entfernen');d.type='button';
       d.onclick=function(){askAdmin(m.name+' entfernen',function(pw){return call({op:'del',kind:'member',id:m.id,admin:pw}).then(apply)})};
-      r.appendChild(d);wrap.appendChild(r);
+      bt.appendChild(ed);bt.appendChild(d);r.appendChild(bt);wrap.appendChild(r);
       if(openPick===m.id){
         var pal=el('div','pal');
         COLORS.forEach(function(c){
@@ -703,8 +757,21 @@ body:has(.modal:not([hidden])){overflow:hidden}
         var inp=document.createElement('input');inp.type='color';inp.value=/^#[0-9a-fA-F]{6}$/.test(m.color)?m.color:'#7d8a82';
         inp.setAttribute('aria-label','Eigene Farbe für '+m.name);
         inp.addEventListener('change',function(){if(inp.value.toLowerCase()!==String(m.color).toLowerCase())saveMemberColor(m,inp.value)});
-        lab.appendChild(inp);pal.appendChild(lab);
-        wrap.appendChild(pal);
+        lab.appendChild(inp);pal.appendChild(lab);wrap.appendChild(pal);
+      }
+      if(openData===m.id){
+        var form=el('form','mdata');
+        var fn=field('Name','text',m.name,'md_name_'+m.id),fp=field('Handynummer','tel',m.phone,'md_phone_'+m.id),
+            fb=field('Geburtstag','date',m.birthday,'md_bd_'+m.id),fe=field('E-Mail','email',m.email,'md_mail_'+m.id),fno=field('Notiz','area',m.note,'md_note_'+m.id);
+        fn.input.required=true;fn.input.maxLength=40;fp.input.maxLength=30;fp.input.setAttribute('inputmode','tel');fe.input.maxLength=80;fno.input.maxLength=300;
+        [fn,fp,fb,fe,fno].forEach(function(x){form.appendChild(x.lab)});
+        var act=el('div','actions'),sv=el('button','btn sm','Speichern');sv.type='submit';act.appendChild(sv);form.appendChild(act);
+        form.addEventListener('submit',function(ev){
+          ev.preventDefault();
+          saveMember(m,{name:fn.input.value.trim(),phone:fp.input.value.trim(),birthday:fb.input.value,email:fe.input.value.trim(),note:fno.input.value.trim()})
+            .then(function(){openData=null;renderPeopleList()}).catch(function(){});
+        });
+        wrap.appendChild(form);
       }
       l.appendChild(wrap);
     });
@@ -749,6 +816,60 @@ body:has(.modal:not([hidden])){overflow:hidden}
   });
   $('photoDel').onclick=function(){askAdmin('Foto entfernen',function(pw){return call({op:'photo_del',admin:pw}).then(function(){showPhoto(null);$('photoErr').textContent='Foto entfernt.'})})};
 
+  /* ---- Erinnerungen aufs Handy (Web Push) ---- */
+  var VAPID_PUBLIC='BHF_Fg3DwHowO7VMl2pkrwk1ydRZtKzh4YXEIvfGVEQnZhUiEctkiNtfdH5wYHFbS-282kp3dQaf-6xYVffi4ko';
+  function isIos(){return /iPhone|iPad|iPod/.test(navigator.userAgent)}
+  function isStandalone(){return window.navigator.standalone===true||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)}
+  function pushSupported(){return 'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window}
+  function u8(b64){var p='='.repeat((4-b64.length%4)%4),t=(b64+p).replace(/-/g,'+').replace(/_/g,'/'),r=atob(t),a=new Uint8Array(r.length);for(var i=0;i<r.length;i++)a[i]=r.charCodeAt(i);return a}
+  function getReg(){return navigator.serviceWorker.register('sw.js').then(function(){return navigator.serviceWorker.ready})}
+  function rmsg(t){$('rMsg').textContent=t}
+  function refreshRemind(){
+    var info=$('rInfo'),can=true;
+    if(isIos()&&!isStandalone()){info.textContent='Auf dem iPhone geht das nur in der App vom Startbildschirm. Tippe in Safari auf Teilen, dann „Zum Home-Bildschirm", und öffne den Kalender von dort. Es braucht iOS 16.4 oder neuer.';can=false}
+    else if(!pushSupported()){info.textContent='Dieses Gerät oder dieser Browser unterstützt keine Erinnerungen.';can=false}
+    ['rOn','rTest','rOff'].forEach(function(id){$(id).disabled=!can});
+    if(!can)return;
+    getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){
+      info.textContent=sub?'Erinnerungen sind auf diesem Gerät eingeschaltet.':(Notification.permission==='denied'?'Mitteilungen sind für diese App blockiert. Bitte in den iPhone-Einstellungen unter Mitteilungen erlauben.':'Erinnerungen sind auf diesem Gerät aus.');
+    }).catch(function(){info.textContent='Der Status ist gerade nicht abrufbar.'});
+  }
+  $('btnRemind').onclick=function(){
+    var w=$('rWho');w.textContent='';
+    var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
+    members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
+    w.value=load('fk-me')||'';rmsg('');$('rModal').hidden=false;refreshRemind();
+  };
+  $('rClose').onclick=function(){$('rModal').hidden=true};
+  $('rModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
+  $('rOn').onclick=function(){
+    var who=$('rWho').value;
+    if(!who){rmsg('Bitte zuerst wählen, zu wem dieses Handy gehört.');return}
+    store('fk-me',who);
+    Notification.requestPermission().then(function(perm){
+      if(perm!=='granted'){rmsg('Ohne Erlaubnis gibt es keine Erinnerungen. Bitte in den Einstellungen erlauben.');throw 0}
+      return getReg();
+    }).then(function(reg){
+      return reg.pushManager.getSubscription().then(function(sub){return sub||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(VAPID_PUBLIC)})});
+    }).then(function(sub){return call({op:'push_sub',sub:{endpoint:sub.endpoint},memberId:who})})
+      .then(function(){rmsg('Erinnerungen sind eingeschaltet. Mit „Test senden" kannst du es prüfen.');refreshRemind()})
+      .catch(function(e){if(e!==0)rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
+  };
+  $('rTest').onclick=function(){
+    rmsg('Wird gesendet …');
+    getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){
+      if(!sub){rmsg('Dieses Gerät ist noch nicht eingeschaltet.');return}
+      return call({op:'push_test',endpoint:sub.endpoint}).then(function(j){rmsg(j.status>=200&&j.status<300?'Test gesendet. Die Meldung sollte gleich erscheinen.':'Der Test wurde nicht angenommen (Status '+j.status+'). Bitte aus- und wieder einschalten.')});
+    }).catch(function(e){rmsg('Test fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
+  };
+  $('rOff').onclick=function(){
+    getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){
+      if(!sub){rmsg('Erinnerungen sind hier schon aus.');return}
+      var ep=sub.endpoint;
+      return sub.unsubscribe().then(function(){return call({op:'push_unsub',endpoint:ep})}).then(function(){rmsg('Erinnerungen sind ausgeschaltet.');refreshRemind()});
+    }).catch(function(e){rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
+  };
+
   /* ---- Outlook ---- */
   $('btnOutlook').onclick=function(){
     $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oModal').hidden=false;
@@ -776,9 +897,10 @@ body:has(.modal:not([hidden])){overflow:hidden}
       if(Date.now()-st<800&&Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5){$(dx<0?'next':'prev').click()}
     },{passive:true});
   })();
-  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true;$('rModal').hidden=true}});
 
   setTimeout(function(){var sp=$('splash');if(!sp)return;sp.classList.add('out');setTimeout(function(){sp.parentNode&&sp.parentNode.removeChild(sp)},700)},2000);
+  if('serviceWorker' in navigator){try{navigator.serviceWorker.register('sw.js').catch(function(){})}catch(e){}}
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();
   pass=load('fk-pass')||'';
