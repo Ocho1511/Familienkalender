@@ -157,6 +157,12 @@ input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date
 .sheet{margin-top:max(8px,2vh);margin-bottom:16px;min-width:0}
 #evForm .actions{position:sticky;bottom:0;background:var(--surface);padding-top:10px}
 body:has(.modal:not([hidden])){overflow:hidden}
+.memwrap{display:flex;flex-direction:column;gap:6px}
+.dotbtn{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);background:var(--c);padding:0;flex:none;cursor:pointer}
+.dotbtn[aria-expanded="true"]{border-color:var(--fg)}
+.pal{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 4px 2px}
+.pal .custom{flex-direction:row;align-items:center;gap:6px;margin-left:4px}
+.pal input[type="color"]{width:34px;height:30px;min-height:0;padding:0;border:1px solid var(--line);border-radius:6px;background:transparent}
 </style>
 </head>
 <body>
@@ -668,14 +674,39 @@ body:has(.modal:not([hidden])){overflow:hidden}
       b.onclick=function(){pickColor=c;renderSwatches()};s.appendChild(b);
     });
   }
+  var openPick=null;
+  function saveMemberColor(m,c){
+    write({op:'put',kind:'member',item:{id:m.id,name:m.name,color:c,createdAt:m.createdAt,order:m.order}},$('pErr')).catch(function(){});
+  }
   function renderPeopleList(){
     var l=$('pList');l.textContent='';
     if(!members.length)l.appendChild(el('div','empty','Noch niemand angelegt.'));
     members.forEach(function(m){
-      var r=el('div','mem'),n=el('span');var i=el('i');i.style.setProperty('--c',m.color);n.appendChild(i);n.appendChild(document.createTextNode(m.name));r.appendChild(n);
+      var wrap=el('div','memwrap');
+      var r=el('div','mem'),n=el('span');
+      var dot=el('button','dotbtn');dot.type='button';dot.style.setProperty('--c',m.color);
+      dot.setAttribute('aria-label','Farbe von '+m.name+' ändern');dot.setAttribute('aria-expanded',openPick===m.id?'true':'false');
+      dot.onclick=function(){openPick=openPick===m.id?null:m.id;renderPeopleList()};
+      n.appendChild(dot);n.appendChild(document.createTextNode(m.name));r.appendChild(n);
       var d=el('button','btn danger sm','Entfernen');d.type='button';
       d.onclick=function(){askAdmin(m.name+' entfernen',function(pw){return call({op:'del',kind:'member',id:m.id,admin:pw}).then(apply)})};
-      r.appendChild(d);l.appendChild(r);
+      r.appendChild(d);wrap.appendChild(r);
+      if(openPick===m.id){
+        var pal=el('div','pal');
+        COLORS.forEach(function(c){
+          var b=el('button','sw');b.type='button';b.style.setProperty('--c',c);b.setAttribute('role','radio');
+          b.setAttribute('aria-checked',c.toLowerCase()===String(m.color).toLowerCase()?'true':'false');b.setAttribute('aria-label','Farbe '+c);
+          b.onclick=function(){if(c.toLowerCase()!==String(m.color).toLowerCase())saveMemberColor(m,c)};
+          pal.appendChild(b);
+        });
+        var lab=el('label','custom','Eigene Farbe');
+        var inp=document.createElement('input');inp.type='color';inp.value=/^#[0-9a-fA-F]{6}$/.test(m.color)?m.color:'#7d8a82';
+        inp.setAttribute('aria-label','Eigene Farbe für '+m.name);
+        inp.addEventListener('change',function(){if(inp.value.toLowerCase()!==String(m.color).toLowerCase())saveMemberColor(m,inp.value)});
+        lab.appendChild(inp);pal.appendChild(lab);
+        wrap.appendChild(pal);
+      }
+      l.appendChild(wrap);
     });
   }
   $('btnPeople').onclick=function(){
