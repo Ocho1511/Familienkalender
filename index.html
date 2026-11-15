@@ -92,9 +92,32 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 .mem i{width:12px;height:12px;border-radius:50%;background:var(--c);flex:none}
 .err{color:var(--danger);font-size:13px;min-height:1em}
 .login{max-width:360px;margin:12vh auto 0}
+#splash{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  transition:opacity .5s ease,visibility .5s}
+#splash.out{opacity:0;visibility:hidden}
+#splash svg{width:132px;height:132px;animation:pop .7s cubic-bezier(.2,.9,.3,1.2) both}
+#splash .name{font:600 30px/1 var(--font-display);letter-spacing:.01em;animation:rise .7s .15s ease both}
+#splash .dots i{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px;animation:rise .7s ease both}
+@keyframes pop{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes rise{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){#splash svg,#splash .name,#splash .dots i{animation:none}#splash{transition:none}}
 </style>
 </head>
 <body>
+<div id="splash" aria-hidden="true">
+  <svg viewBox="0 0 128 128" role="img" aria-label="Familienkalender">
+    <rect x="10" y="18" width="108" height="100" rx="20" fill="var(--surface)" stroke="var(--line)" stroke-width="3"/>
+    <path d="M10 56V38a20 20 0 0 1 20-20h68a20 20 0 0 1 20 20v18z" fill="var(--accent)"/>
+    <rect x="34" y="6" width="9" height="26" rx="4.5" fill="var(--fg)"/>
+    <rect x="85" y="6" width="9" height="26" rx="4.5" fill="var(--fg)"/>
+    <circle cx="44" cy="76" r="10" fill="#3f6fb5"/>
+    <circle cx="84" cy="76" r="10" fill="#c24f7b"/>
+    <circle cx="44" cy="100" r="10" fill="#d1603d"/>
+    <circle cx="84" cy="100" r="10" fill="#2f6b57"/>
+  </svg>
+  <div class="name">Familienkalender</div>
+  <div class="dots"><i style="background:#3f6fb5"></i><i style="background:#c24f7b;animation-delay:.1s"></i><i style="background:#d1603d;animation-delay:.2s"></i><i style="background:#2f6b57;animation-delay:.3s"></i></div>
+</div>
 
 <div class="wrap">
   <header>
@@ -447,6 +470,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   })();
   document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true}});
 
+  setTimeout(function(){var sp=$('splash');if(!sp)return;sp.classList.add('out');setTimeout(function(){sp.parentNode&&sp.parentNode.removeChild(sp)},600)},1500);
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();
   pass=load('fk-pass')||'';
