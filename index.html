@@ -115,7 +115,9 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 #splash .fig:nth-of-type(2){animation-delay:.45s}#splash .fig:nth-of-type(3){animation-delay:.58s}
 #splash .fig:nth-of-type(4){animation-delay:.71s}#splash .fig:nth-of-type(5){animation-delay:.84s}
 #splash .name{font:600 clamp(30px,9vw,42px)/1.05 var(--font-display);letter-spacing:.01em;animation:rise .7s .5s ease both}
-#splash .claim{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.72);margin-top:-14px;animation:rise .7s .7s ease both}
+#splash .names{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;width:100%;max-width:360px;margin-top:-10px;animation:rise .7s .7s ease both}
+#splash .names span{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.94);color:#1d2420;border-radius:999px;padding:5px 10px 5px 8px;font-weight:600;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+#splash .names i{width:13px;height:13px;border-radius:50%;background:var(--c);display:block}
 #splash .pic{width:min(58vw,240px);height:min(58vw,240px);border-radius:50%;object-fit:cover;border:5px solid rgba(255,255,255,.9);box-shadow:0 14px 30px rgba(0,0,0,.4);animation:pop .8s cubic-bezier(.2,.9,.3,1.15) both}
 @keyframes pop{from{transform:scale(.75);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes rise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
@@ -137,7 +139,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     <g class="fig"><circle cx="122" cy="108" r="10" fill="#2f6b57"/><path d="M108 134a14 14 0 0 1 28 0z" fill="#2f6b57"/></g>
   </svg>
   <div class="name">Familienkalender</div>
-  <div class="claim">Alle Termine. Eine Familie.</div>
+  <div class="names" id="splashNames"></div>
 </div>
 <div class="wrap">
   <div id="photoBox" hidden><img id="photoImg" alt="Familienfoto"></div>
@@ -320,7 +322,7 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
     im.onerror=function(){URL.revokeObjectURL(url);fail()};
     im.src=url;
   }
-  function apply(j){if(!photoLoaded){photoLoaded=true;loadPhoto()}members=(j.members||[]).slice().sort(function(a,b){var x=a.order!=null?a.order:1e6,y=b.order!=null?b.order:1e6;return x-y||a.createdAt-b.createdAt});events=j.events||[];loaded=true;offline=false;renderAll()}
+  function apply(j){if(!photoLoaded){photoLoaded=true;loadPhoto()}members=(j.members||[]).slice().sort(function(a,b){var x=a.order!=null?a.order:1e6,y=b.order!=null?b.order:1e6;return x-y||a.createdAt-b.createdAt});events=j.events||[];try{store('fk-members',JSON.stringify(members.map(function(m){return {name:m.name,color:m.color}})))}catch(e){}loaded=true;offline=false;renderAll()}
   function pull(){
     return call({op:'pull'}).then(apply).catch(function(e){
       if(e.status===401){store('fk-pass','');pass='';showLogin('Falsches Passwort.')}
@@ -595,6 +597,12 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   try{hidden=JSON.parse(load('fk-hidden')||'{}')||{}}catch(e){hidden={}}
   renderAll();
   pass=load('fk-pass')||'';
+  (function(){
+    var list=[{name:'Mats',color:'#3f6fb5'},{name:'Leni',color:'#c24f7b'},{name:'Ira',color:'#d1603d'},{name:'Thomas',color:'#2f6b57'}];
+    try{var c=JSON.parse(load('fk-members')||'null');if(c&&c.length)list=c}catch(e){}
+    var box=$('splashNames');if(!box)return;
+    list.forEach(function(m){var sp=el('span',null,m.name),i=el('i');i.style.setProperty('--c',m.color);sp.insertBefore(i,sp.firstChild);box.appendChild(sp)});
+  })();
   (function(){var d=pass&&load('fk-photo');if(!d)return;showPhoto(d);var sp=$('splash');if(!sp)return;var im=document.createElement('img');im.className='pic';im.alt='';im.src=d;var svg=sp.querySelector('svg');sp.replaceChild(im,svg)})();
   if(pass){pull().then(startPolling)}else showLogin('');
 })();
