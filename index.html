@@ -437,7 +437,22 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
   var photoLoaded=false;
   function showPhoto(d){
     var box=$('photoBox');
-    if(d){$('photoImg').src=d;box.hidden=false;store('fk-photo',d)}else{box.hidden=true;$('photoImg').removeAttribute('src');store('fk-photo','')}
+    if(d){$('photoImg').src=d;box.hidden=false;store('fk-photo',d);setAppIcon(d)}else{box.hidden=true;$('photoImg').removeAttribute('src');store('fk-photo','');setLinks('icons/apple-touch-icon.png','icons/favicon-32.png')}
+  }
+  /* App-Symbol aus dem Familienfoto: Das Foto bleibt geschützt, das Symbol entsteht erst nach dem Login im Browser des Geräts.
+     Beim Hinzufügen zum Home-Bildschirm liest iOS dieses Symbol. */
+  function setLinks(href,fav){
+    var a=document.querySelector('link[rel="apple-touch-icon"]'),f=document.querySelector('link[rel="icon"]');
+    if(a)a.href=href;if(f)f.href=fav;
+  }
+  function setAppIcon(d){
+    var im=new Image();
+    im.onload=function(){
+      var side=Math.min(im.width,im.height),sx=(im.width-side)/2,sy=(im.height-side)*0.2;
+      var make=function(sz){var cv=document.createElement('canvas');cv.width=cv.height=sz;cv.getContext('2d').drawImage(im,sx,sy,side,side,0,0,sz,sz);return cv.toDataURL('image/png')};
+      try{setLinks(make(180),make(64))}catch(e){}
+    };
+    im.src=d;
   }
   function loadPhoto(){call({op:'photo_get'}).then(function(j){showPhoto(j.photo)}).catch(function(){})}
   function resizeToJpeg(file,cb,fail){
@@ -797,8 +812,10 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       if(m.tiktok)links.push(['TikTok @'+m.tiktok,'https://www.tiktok.com/@'+encodeURIComponent(m.tiktok)]);
       if(m.instagram)links.push(['Instagram @'+m.instagram,'https://www.instagram.com/'+encodeURIComponent(m.instagram)]);
       if(m.snapchat)links.push(['Snapchat '+m.snapchat,'https://www.snapchat.com/add/'+encodeURIComponent(m.snapchat)]);
+      if(m.telegram)links.push(['Telegram @'+m.telegram,'https://t.me/'+encodeURIComponent(m.telegram)]);
+      if(m.discord)links.push(['Discord '+m.discord,'']);
       if(m.email){var ma=el('a','minfo',m.email);ma.href='mailto:'+encodeURIComponent(m.email).replace('%40','@');nm.appendChild(ma)}
-      if(links.length){var lr=el('span','minfo');links.forEach(function(x,k){if(k)lr.appendChild(document.createTextNode(' · '));var a=el('a',null,x[0]);a.href=x[1];a.target='_blank';a.rel='noopener';a.style.color='inherit';lr.appendChild(a)});nm.appendChild(lr)}
+      if(links.length){var lr=el('span','minfo');links.forEach(function(x,k){if(k)lr.appendChild(document.createTextNode(' · '));var a;if(x[1]){a=el('a',null,x[0]);a.href=x[1];a.target='_blank';a.rel='noopener';a.style.color='inherit'}else a=el('span',null,x[0]);lr.appendChild(a)});nm.appendChild(lr)}
       if(info.length)nm.appendChild(el('span','minfo',info.join(' · ')));
       n.appendChild(nm);r.appendChild(n);
       var bt=el('span','mbtns');
@@ -825,15 +842,16 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
             fw=field('WhatsApp-Nummer (falls anders)','tel',m.whatsapp,'md_wa_'+m.id),
             fb=field('Geburtstag','date',m.birthday,'md_bd_'+m.id),fe=field('E-Mail','email',m.email,'md_mail_'+m.id),
             ft=field('TikTok (Name ohne @)','text',m.tiktok,'md_tt_'+m.id),fi=field('Instagram (Name ohne @)','text',m.instagram,'md_ig_'+m.id),fs=field('Snapchat (Name)','text',m.snapchat,'md_sc_'+m.id),
+            fg=field('Telegram (Name ohne @)','text',m.telegram,'md_tg_'+m.id),fd=field('Discord (Name)','text',m.discord,'md_dc_'+m.id),
             fno=field('Notiz','area',m.note,'md_note_'+m.id);
-        fn.input.required=true;fn.input.maxLength=40;fp.input.maxLength=30;fw.input.maxLength=30;fw.input.setAttribute('inputmode','tel');[ft,fi,fs].forEach(function(x){x.input.maxLength=40;x.input.setAttribute('autocapitalize','off');x.input.setAttribute('autocomplete','off')});fp.input.setAttribute('inputmode','tel');fe.input.maxLength=80;fno.input.maxLength=300;
-        [fn,fp,fw,fb,fe,ft,fi,fs,fno].forEach(function(x){form.appendChild(x.lab)});
+        fn.input.required=true;fn.input.maxLength=40;fp.input.maxLength=30;fw.input.maxLength=30;fw.input.setAttribute('inputmode','tel');[ft,fi,fs,fg,fd].forEach(function(x){x.input.maxLength=40;x.input.setAttribute('autocapitalize','off');x.input.setAttribute('autocomplete','off')});fp.input.setAttribute('inputmode','tel');fe.input.maxLength=80;fno.input.maxLength=300;
+        [fn,fp,fw,fb,fe,ft,fi,fs,fg,fd,fno].forEach(function(x){form.appendChild(x.lab)});
         var act=el('div','actions'),sv=el('button','btn sm','Speichern');sv.type='submit';
         var rm=el('button','btn danger sm','Person entfernen');rm.type='button';rm.onclick=function(){removeMember(m)};
         act.appendChild(rm);act.appendChild(sv);form.appendChild(act);
         form.addEventListener('submit',function(ev){
           ev.preventDefault();
-          saveMember(m,{name:fn.input.value.trim(),phone:fp.input.value.trim(),whatsapp:fw.input.value.trim(),birthday:fb.input.value,email:fe.input.value.trim(),tiktok:ft.input.value.trim(),instagram:fi.input.value.trim(),snapchat:fs.input.value.trim(),note:fno.input.value.trim()})
+          saveMember(m,{name:fn.input.value.trim(),phone:fp.input.value.trim(),whatsapp:fw.input.value.trim(),birthday:fb.input.value,email:fe.input.value.trim(),tiktok:ft.input.value.trim(),instagram:fi.input.value.trim(),snapchat:fs.input.value.trim(),telegram:fg.input.value.trim(),discord:fd.input.value.trim(),note:fno.input.value.trim()})
             .then(function(){openData=null;renderPeopleList()}).catch(function(){});
         });
         wrap.appendChild(form);

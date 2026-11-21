@@ -67,6 +67,8 @@ function cleanMember(m) {
     tiktok: handle(m.tiktok),
     instagram: handle(m.instagram),
     snapchat: handle(m.snapchat),
+    telegram: handle(m.telegram),
+    discord: handle(m.discord),
     birthday: DATE_RE.test(m.birthday || '') ? m.birthday : '',
     email: /^[^\s@]+@[^\s@]+$/.test(email) ? email : '',
     note: str(m.note, 300).trim(),
