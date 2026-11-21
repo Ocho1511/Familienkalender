@@ -19,3 +19,7 @@ crons = ["*/5 * * * *"]
 
 [vars]
 VAPID_PUBLIC = "BHF_Fg3DwHowO7VMl2pkrwk1ydRZtKzh4YXEIvfGVEQnZhUiEctkiNtfdH5wYHFbS-282kp3dQaf-6xYVffi4ko"
+
+# WhatsApp (Meta Cloud API): Name der genehmigten Vorlage und Sprache. Zugangsdaten als Secrets: WA_TOKEN, WA_PHONE_ID
+WA_TEMPLATE = "termin_erinnerung"
+WA_LANG = "de"

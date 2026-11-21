@@ -86,6 +86,7 @@ function cleanEvent(e) {
     start: e.start, end, time: TIME_RE.test(e.time || '') ? e.time : '',
     note: str(e.note, 500).trim(), createdAt: Number(e.createdAt) || Date.now(),
     remind: hasRemind ? Number(e.remind) : undefined,
+    remindWa: hasRemind && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
   };
 }
 
@@ -137,6 +138,35 @@ function leadText(min) {
   if (min < 1440) return 'in ' + min / 60 + ' Std.';
   return 'in ' + min / 1440 + (min >= 2880 ? ' Tagen' : ' Tag');
 }
+// ---- WhatsApp (offizielle Cloud API von Meta, Vorlagen-Nachricht) ----
+function waConfigured(env) { return !!(env.WA_TOKEN && env.WA_PHONE_ID && env.WA_TEMPLATE); }
+// "0170 123" -> "49170123", "+49 170 123" -> "49170123"
+function waNumber(num) {
+  let n = String(num || '').trim();
+  const plus = n.startsWith('+');
+  n = n.replace(/[^0-9]/g, '');
+  if (!n) return '';
+  if (plus) return n;
+  if (n.startsWith('00')) return n.slice(2);
+  if (n.startsWith('0')) return '49' + n.slice(1);
+  return n;
+}
+const waText = (t) => String(t == null ? '' : t).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 200) || '-';
+async function waSend(env, to, params) {
+  const r = await fetch('https://graph.facebook.com/v21.0/' + encodeURIComponent(env.WA_PHONE_ID) + '/messages', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + String(env.WA_TOKEN).trim(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp', to, type: 'template',
+      template: { name: env.WA_TEMPLATE, language: { code: env.WA_LANG || 'de' }, components: [{ type: 'body', parameters: params.map((p) => ({ type: 'text', text: waText(p) })) }] },
+    }),
+  });
+  let detail = '';
+  try { const j = await r.json(); detail = (j && j.error && j.error.message) || ''; } catch (e) { /* kein JSON */ }
+  return { ok: r.ok, status: r.status, detail };
+}
+const deDate = (s) => s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4);
+
 async function runReminders(env) {
   const now = Date.now();
   let last = Number(await env.KV.get('lastrun')) || now - 5 * 60000;
@@ -148,6 +178,7 @@ async function runReminders(env) {
   (state.members || []).forEach((m) => { names[m.id] = m.name; });
   const outbox = {};
   const sentKeys = [];
+  const waQueue = [];
   const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
 
   for (const e of state.events || []) {
@@ -159,6 +190,10 @@ async function runReminders(env) {
     sentKeys.push(dk);
     const who = e.who && names[e.who] ? names[e.who] : 'Alle';
     add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) });
+    if (e.remindWa && waConfigured(env)) {
+      const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
+      rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(e.start) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(e.remind) + ')', who] }));
+    }
   }
   const year = new Date(now + 3600000).getUTCFullYear();
   for (const m of state.members || []) {
@@ -175,6 +210,10 @@ async function runReminders(env) {
   for (const h of Object.keys(outbox)) {
     const st = await sendPush(env, h, subs[h].endpoint, outbox[h]).catch(() => 0);
     if (st === 404 || st === 410) { delete subs[h]; changed = true; }
+  }
+  for (const w of waQueue) {
+    const res = await waSend(env, w.to, w.params).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }));
+    if (!res.ok) console.log('WhatsApp fehlgeschlagen', res.status, res.detail);
   }
   if (changed) await env.KV.put('subs', JSON.stringify(subs));
   await Promise.all(sentKeys.map((k) => env.KV.put(k, '1', { expirationTtl: 172800 })));
@@ -278,6 +317,17 @@ export default {
     state.members = state.members || [];
     state.events = state.events || [];
 
+    if (body.op === 'wa_status') {
+      return reply({ configured: waConfigured(env), template: waConfigured(env) ? env.WA_TEMPLATE : '' }, 200, c);
+    }
+    if (body.op === 'wa_test') {
+      if (!waConfigured(env)) return reply({ ok: false, error: 'WhatsApp ist im Worker noch nicht eingerichtet' }, 200, c);
+      const m = state.members.find((x) => x.id === body.memberId);
+      const to = m ? waNumber(m.whatsapp || m.phone) : '';
+      if (!to) return reply({ ok: false, error: 'Fuer diese Person ist keine WhatsApp- oder Handynummer hinterlegt' }, 200, c);
+      const res = await waSend(env, to, ['Testnachricht', deDate(new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' })), m.name]).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }));
+      return reply({ ok: res.ok, status: res.status, detail: res.detail }, 200, c);
+    }
     if (body.op === 'push_sub') {
       const ep = String((body.sub && body.sub.endpoint) || '');
       if (!/^https:\/\/[^\s]{10,500}$/.test(ep)) return reply({ error: 'Ungueltiges Abo' }, 400, c);

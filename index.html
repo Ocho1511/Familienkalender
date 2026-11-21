@@ -185,6 +185,8 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
 #splash.photo{background-size:cover;background-position:center;justify-content:flex-end;gap:14px;padding-bottom:calc(56px + env(safe-area-inset-bottom,0px))}
 #splash.photo .name{text-shadow:0 2px 14px rgba(0,0,0,.55)}
 #splash.photo .claim{color:rgba(255,255,255,.92);text-shadow:0 1px 8px rgba(0,0,0,.6)}
+.chk{flex-direction:row;align-items:center;gap:8px;color:var(--fg);font-size:14px}
+.chk input{width:auto;min-height:0;flex:none}
 </style>
 </head>
 <body>
@@ -315,6 +317,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       </select>
     </label>
     <div class="sub" style="margin-top:-6px">Ohne Uhrzeit kommt die Erinnerung um 9 Uhr. Sie geht an die Person des Eintrags, bei „Alle" an alle.</div>
+    <label class="chk" for="fRemindWa"><input type="checkbox" id="fRemindWa"> Zusätzlich per WhatsApp erinnern</label>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
     <div id="evSendBox"></div>
     <div class="err" id="evErr" role="alert"></div>
@@ -369,6 +372,10 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
     <label for="rWho">Dieses Handy gehört zu <select id="rWho"></select></label>
     <div class="actions"><button class="btn" id="rOn" type="button">Auf diesem Gerät einschalten</button></div>
     <div class="actions"><button class="btn ghost sm" id="rTest" type="button">Test senden</button><button class="btn danger sm" id="rOff" type="button">Ausschalten</button></div>
+    <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
+    <p class="sub" id="wInfo" style="margin:0"></p>
+    <label for="wWho">WhatsApp-Test an <select id="wWho"></select></label>
+    <div class="actions"><button class="btn ghost sm" id="wTest" type="button">WhatsApp-Test senden</button></div>
     <div class="err" id="rMsg" role="alert"></div>
     <div class="actions"><button class="btn ghost" id="rClose" type="button">Schließen</button></div>
   </div>
@@ -751,6 +758,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
     $('fTime').value=e&&e.time?e.time:'';
     $('fNote').value=e&&e.note?e.note:'';
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';
+    $('fRemindWa').checked=!!(e&&e.remindWa);
     var sb=$('evSendBox');sb.textContent='';if(e)sb.appendChild(sendBox(e));
     $('evDel').hidden=!e;$('evDel').textContent='Löschen';$('evErr').textContent='';
     $('evModal').hidden=false;$('fTitle').focus();
@@ -765,6 +773,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
     if(end&&end<start){$('evErr').textContent='Das Enddatum liegt vor dem Startdatum.';return}
     var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:end,time:$('fTime').value,note:$('fNote').value.trim(),
       remind:$('fRemind').value===''?null:Number($('fRemind').value),
+      remindWa:$('fRemind').value!==''&&$('fRemindWa').checked,
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
     if(data.who)store('fk-me',data.who);
@@ -931,7 +940,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
     var w=$('rWho');w.textContent='';
     var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
     members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
-    w.value=load('fk-me')||'';rmsg('');$('rModal').hidden=false;refreshRemind();
+    w.value=load('fk-me')||'';rmsg('');$('rModal').hidden=false;refreshRemind();loadWa();
   };
   $('rClose').onclick=function(){$('rModal').hidden=true};
   $('rModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
@@ -961,6 +970,26 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       var ep=sub.endpoint;
       return sub.unsubscribe().then(function(){return call({op:'push_unsub',endpoint:ep})}).then(function(){rmsg('Erinnerungen sind ausgeschaltet.');refreshRemind()});
     }).catch(function(e){rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
+  };
+
+  /* ---- WhatsApp-Erinnerung (offizielle Meta-API, im Worker) ---- */
+  function loadWa(){
+    var w=$('wWho');w.textContent='';
+    var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
+    members.forEach(function(m){var x=el('option',null,m.name+(m.whatsapp||m.phone?'':' (keine Nummer)'));x.value=m.id;w.appendChild(x)});
+    $('wInfo').textContent='WhatsApp wird geprüft …';$('wTest').disabled=true;
+    call({op:'wa_status'}).then(function(j){
+      $('wInfo').textContent=j.configured?'WhatsApp ist eingerichtet. Am Termin „Zusätzlich per WhatsApp erinnern" ankreuzen, dann geht die Erinnerung an die WhatsApp-Nummer der Person.':'WhatsApp ist noch nicht eingerichtet. Im Worker fehlen die Zugangsdaten von Meta (siehe Anleitung WHATSAPP_SETUP.md im Repo).';
+      $('wTest').disabled=!j.configured;
+    }).catch(function(){$('wInfo').textContent='Der WhatsApp-Status ist gerade nicht abrufbar.'});
+  }
+  $('wTest').onclick=function(){
+    var id=$('wWho').value;
+    if(!id){rmsg('Bitte zuerst wählen, an wen der WhatsApp-Test gehen soll.');return}
+    rmsg('WhatsApp-Test wird gesendet …');
+    call({op:'wa_test',memberId:id}).then(function(j){
+      rmsg(j.ok?'WhatsApp-Test gesendet. Die Nachricht sollte gleich ankommen.':'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
+    }).catch(function(e){rmsg('Test fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
   };
 
   /* ---- Outlook ---- */
