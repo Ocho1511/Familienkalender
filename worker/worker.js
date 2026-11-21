@@ -139,6 +139,7 @@ async function runReminders(env) {
   const names = {};
   (state.members || []).forEach((m) => { names[m.id] = m.name; });
   const outbox = {};
+  const sentKeys = [];
   const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
 
   for (const e of state.events || []) {
@@ -147,7 +148,7 @@ async function runReminders(env) {
     if (!(t > last && t <= now)) continue;
     const dk = 'sent:' + e.id + ':' + t;
     if (await env.KV.get(dk)) continue;
-    await env.KV.put(dk, '1', { expirationTtl: 172800 });
+    sentKeys.push(dk);
     const who = e.who && names[e.who] ? names[e.who] : 'Alle';
     add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) });
   }
@@ -158,7 +159,7 @@ async function runReminders(env) {
     if (!(t > last && t <= now)) continue;
     const dk = 'sentb:' + m.id + ':' + year;
     if (await env.KV.get(dk)) continue;
-    await env.KV.put(dk, '1', { expirationTtl: 172800 });
+    sentKeys.push(dk);
     const age = year - Number(m.birthday.slice(0, 4));
     add('', { title: 'Geburtstag', body: 'Heute hat ' + m.name + ' Geburtstag' + (age > 0 && age < 120 ? ' (' + age + ')' : '') });
   }
@@ -168,6 +169,7 @@ async function runReminders(env) {
     if (st === 404 || st === 410) { delete subs[h]; changed = true; }
   }
   if (changed) await env.KV.put('subs', JSON.stringify(subs));
+  await Promise.all(sentKeys.map((k) => env.KV.put(k, '1', { expirationTtl: 172800 })));
   await env.KV.put('lastrun', String(now));
 }
 
@@ -253,6 +255,7 @@ export default {
     if (request.method !== 'POST') return reply({ error: 'POST erwartet' }, 405, c);
     if (!env.KV || !env.FAMILY_PASSWORD) return reply({ error: 'Worker nicht eingerichtet' }, 500, c);
 
+    if (Number(request.headers.get('content-length') || 0) > 2000000) return reply({ error: 'Anfrage zu gross' }, 413, c);
     let body;
     try { body = await request.json(); } catch (e) { return reply({ error: 'Ungueltige Anfrage' }, 400, c); }
 
