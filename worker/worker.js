@@ -57,10 +57,16 @@ function cleanMember(m) {
   const name = str(m.name, 40).trim();
   if (!name) return null;
   const email = str(m.email, 80).trim();
+  const handle = (v) => str(v, 40).replace(/^@/, '').replace(/[^A-Za-z0-9._]/g, '');
+  const phoneClean = (v) => str(v, 30).replace(/[^0-9+()\/\s.-]/g, '').trim();
   return {
     id: m.id, name, color: COLOR_RE.test(m.color || '') ? m.color : '#7d8a82', createdAt: Number(m.createdAt) || Date.now(),
     order: Number.isFinite(Number(m.order)) && m.order !== undefined && m.order !== null ? Number(m.order) : undefined,
-    phone: str(m.phone, 30).replace(/[^0-9+()\/\s.-]/g, '').trim(),
+    phone: phoneClean(m.phone),
+    whatsapp: phoneClean(m.whatsapp),
+    tiktok: handle(m.tiktok),
+    instagram: handle(m.instagram),
+    snapchat: handle(m.snapchat),
     birthday: DATE_RE.test(m.birthday || '') ? m.birthday : '',
     email: /^[^\s@]+@[^\s@]+$/.test(email) ? email : '',
     note: str(m.note, 300).trim(),

@@ -666,11 +666,12 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
   }
   function sendBox(e){
     var rec=e.who&&memberOf(e.who)?[memberOf(e.who)]:members;
-    var nums=rec.map(function(m){return phoneDigits(m.phone)}).filter(Boolean);
+    var nums=rec.map(function(m){return phoneDigits(m.phone||m.whatsapp)}).filter(Boolean);
+    var waNums=rec.map(function(m){return phoneDigits(m.whatsapp||m.phone)}).filter(Boolean);
     var mails=rec.map(function(m){return m.email?encodeURIComponent(m.email).replace('%40','@'):''}).filter(Boolean);
     var t=encodeURIComponent(shareText(e)),box=el('div','send');
     box.appendChild(el('span','sub','Mitteilen:'));
-    var wa=el('a','btn ghost sm','WhatsApp');wa.href='https://wa.me/'+(nums.length===1?nums[0]:'')+'?text='+t;wa.target='_blank';wa.rel='noopener';box.appendChild(wa);
+    var wa=el('a','btn ghost sm','WhatsApp');wa.href='https://wa.me/'+(waNums.length===1?waNums[0]:'')+'?text='+t;wa.target='_blank';wa.rel='noopener';box.appendChild(wa);
     var sm=el('a','btn ghost sm','SMS');sm.href='sms:'+nums.map(function(n){return '+'+n}).join(',')+'?&body='+t;box.appendChild(sm);
     var ml=el('a','btn ghost sm','E-Mail');ml.href='mailto:'+mails.join(',')+'?subject='+encodeURIComponent('Termin: '+e.title)+'&body='+t;box.appendChild(ml);
     return box;
@@ -791,6 +792,13 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       nb.onclick=function(){openData=openData===m.id?null:m.id;renderPeopleList()};nm.appendChild(nb);
       var info=[];if(m.birthday)info.push('Geb. '+fmtBirthday(m.birthday));
       if(m.phone){var ph=el('a','minfo',m.phone);ph.href='tel:'+m.phone.replace(/[^0-9+]/g,'');nm.appendChild(ph)}
+      var links=[];
+      if(m.whatsapp)links.push(['WhatsApp','https://wa.me/'+phoneDigits(m.whatsapp)]);
+      if(m.tiktok)links.push(['TikTok @'+m.tiktok,'https://www.tiktok.com/@'+encodeURIComponent(m.tiktok)]);
+      if(m.instagram)links.push(['Instagram @'+m.instagram,'https://www.instagram.com/'+encodeURIComponent(m.instagram)]);
+      if(m.snapchat)links.push(['Snapchat '+m.snapchat,'https://www.snapchat.com/add/'+encodeURIComponent(m.snapchat)]);
+      if(m.email){var ma=el('a','minfo',m.email);ma.href='mailto:'+encodeURIComponent(m.email).replace('%40','@');nm.appendChild(ma)}
+      if(links.length){var lr=el('span','minfo');links.forEach(function(x,k){if(k)lr.appendChild(document.createTextNode(' · '));var a=el('a',null,x[0]);a.href=x[1];a.target='_blank';a.rel='noopener';a.style.color='inherit';lr.appendChild(a)});nm.appendChild(lr)}
       if(info.length)nm.appendChild(el('span','minfo',info.join(' · ')));
       n.appendChild(nm);r.appendChild(n);
       var bt=el('span','mbtns');
@@ -814,15 +822,18 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       if(openData===m.id){
         var form=el('form','mdata');
         var fn=field('Name','text',m.name,'md_name_'+m.id),fp=field('Handynummer','tel',m.phone,'md_phone_'+m.id),
-            fb=field('Geburtstag','date',m.birthday,'md_bd_'+m.id),fe=field('E-Mail','email',m.email,'md_mail_'+m.id),fno=field('Notiz','area',m.note,'md_note_'+m.id);
-        fn.input.required=true;fn.input.maxLength=40;fp.input.maxLength=30;fp.input.setAttribute('inputmode','tel');fe.input.maxLength=80;fno.input.maxLength=300;
-        [fn,fp,fb,fe,fno].forEach(function(x){form.appendChild(x.lab)});
+            fw=field('WhatsApp-Nummer (falls anders)','tel',m.whatsapp,'md_wa_'+m.id),
+            fb=field('Geburtstag','date',m.birthday,'md_bd_'+m.id),fe=field('E-Mail','email',m.email,'md_mail_'+m.id),
+            ft=field('TikTok (Name ohne @)','text',m.tiktok,'md_tt_'+m.id),fi=field('Instagram (Name ohne @)','text',m.instagram,'md_ig_'+m.id),fs=field('Snapchat (Name)','text',m.snapchat,'md_sc_'+m.id),
+            fno=field('Notiz','area',m.note,'md_note_'+m.id);
+        fn.input.required=true;fn.input.maxLength=40;fp.input.maxLength=30;fw.input.maxLength=30;fw.input.setAttribute('inputmode','tel');[ft,fi,fs].forEach(function(x){x.input.maxLength=40;x.input.setAttribute('autocapitalize','off');x.input.setAttribute('autocomplete','off')});fp.input.setAttribute('inputmode','tel');fe.input.maxLength=80;fno.input.maxLength=300;
+        [fn,fp,fw,fb,fe,ft,fi,fs,fno].forEach(function(x){form.appendChild(x.lab)});
         var act=el('div','actions'),sv=el('button','btn sm','Speichern');sv.type='submit';
         var rm=el('button','btn danger sm','Person entfernen');rm.type='button';rm.onclick=function(){removeMember(m)};
         act.appendChild(rm);act.appendChild(sv);form.appendChild(act);
         form.addEventListener('submit',function(ev){
           ev.preventDefault();
-          saveMember(m,{name:fn.input.value.trim(),phone:fp.input.value.trim(),birthday:fb.input.value,email:fe.input.value.trim(),note:fno.input.value.trim()})
+          saveMember(m,{name:fn.input.value.trim(),phone:fp.input.value.trim(),whatsapp:fw.input.value.trim(),birthday:fb.input.value,email:fe.input.value.trim(),tiktok:ft.input.value.trim(),instagram:fi.input.value.trim(),snapchat:fs.input.value.trim(),note:fno.input.value.trim()})
             .then(function(){openData=null;renderPeopleList()}).catch(function(){});
         });
         wrap.appendChild(form);
