@@ -197,6 +197,8 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
   box-shadow:0 4px 14px rgba(0,0,0,.28);cursor:pointer;padding:0}
 .totop[hidden]{display:none}
 body:has(.modal:not([hidden])) .totop{display:none}
+.mquick{display:flex;gap:8px;align-items:center}
+.mquick input{flex:1;min-width:0}
 </style>
 </head>
 <body>
@@ -364,6 +366,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <div class="actions"><button class="btn ghost sm" id="btnBackup" type="button">Daten sichern (Datei)</button></div>
     <form id="pForm" class="list" autocomplete="off">
       <label for="pName">Neue Person <input id="pName" required maxlength="40" placeholder="Name"></label>
+      <label for="pPhone">Mobilnummer für WhatsApp (optional) <input id="pPhone" type="tel" inputmode="tel" maxlength="30" placeholder="z. B. 0172 1234567"></label>
       <div class="swatches" id="swatches" role="radiogroup" aria-label="Farbe"></div>
       <div class="err" id="pErr" role="alert"></div>
       <div class="actions">
@@ -929,6 +932,12 @@ body:has(.modal:not([hidden])) .totop{display:none}
   function renderPeopleList(){
     var l=$('pList');l.textContent='';
     if(!members.length)l.appendChild(el('div','empty','Noch niemand angelegt.'));
+    else{
+      var withNum=members.filter(function(m){return phoneDigits(m.whatsapp||m.phone).length>=9}).length;
+      var sm=el('div','sub','Mobilnummern für WhatsApp: '+withNum+' von '+members.length+' hinterlegt');
+      if(withNum<members.length)sm.style.color='var(--danger)';
+      l.appendChild(sm);
+    }
     members.forEach(function(m){
       var wrap=el('div','memwrap');
       var r=el('div','mem'),n=el('span');
@@ -955,6 +964,22 @@ body:has(.modal:not([hidden])) .totop{display:none}
       var d=el('button','btn danger sm','Entfernen');d.type='button';
       d.onclick=function(){removeMember(m)};
       bt.appendChild(d);r.appendChild(bt);wrap.appendChild(r);
+      var qf=el('form','mquick');
+      var qi=document.createElement('input');qi.type='tel';qi.setAttribute('inputmode','tel');qi.maxLength=30;qi.id='mq_'+m.id;
+      qi.placeholder='Mobilnummer für WhatsApp, z. B. 0172 1234567';qi.value=m.whatsapp||m.phone||'';qi.setAttribute('aria-label','Mobilnummer von '+m.name);
+      var qb=el('button','btn sm','Speichern');qb.type='submit';
+      var qh=el('div','minfo');
+      var qshow=function(){
+        var v=qi.value.trim(),dg=phoneDigits(v);
+        qh.textContent=!v?'Nummer fehlt':(dg.length<9?'Die Nummer wirkt unvollständig':'Wird verwendet als +'+dg);
+        qh.style.color=(!v||dg.length<9)?'var(--danger)':'var(--muted)';
+      };
+      qshow();qi.addEventListener('input',qshow);
+      qf.addEventListener('submit',function(ev){
+        ev.preventDefault();var v=qi.value.trim(),distinct=m.whatsapp&&m.phone&&m.whatsapp!==m.phone;
+        saveMember(m,distinct?{whatsapp:v}:{phone:v,whatsapp:v}).catch(function(){});
+      });
+      qf.appendChild(qi);qf.appendChild(qb);wrap.appendChild(qf);wrap.appendChild(qh);
       if(openPick===m.id){
         var pal=el('div','pal');
         COLORS.forEach(function(c){
@@ -1001,8 +1026,8 @@ body:has(.modal:not([hidden])) .totop{display:none}
     ev.preventDefault();
     var name=$('pName').value.trim();if(!name)return;
     var nid=uid();openData=nid;
-    write({op:'put',kind:'member',item:{id:nid,name:name,color:pickColor,createdAt:Date.now()}},$('pErr')).then(function(){
-      $('pName').value='';$('pErr').textContent='';pickColor=COLORS[(members.length)%COLORS.length];renderSwatches();
+    write({op:'put',kind:'member',item:{id:nid,name:name,color:pickColor,createdAt:Date.now(),phone:$('pPhone').value.trim(),whatsapp:$('pPhone').value.trim()}},$('pErr')).then(function(){
+      $('pName').value='';$('pPhone').value='';$('pErr').textContent='';pickColor=COLORS[(members.length)%COLORS.length];renderSwatches();
     }).catch(function(){});
   });
 
