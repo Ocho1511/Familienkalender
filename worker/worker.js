@@ -6,6 +6,8 @@
 // Das Familien-Passwort steckt als Secret FAMILY_PASSWORD im Worker (wrangler secret put).
 // Gespeichert wird alles in einem KV-Eintrag "state".
 
+import Anthropic from '@anthropic-ai/sdk';
+
 const DEFAULT_ORIGINS = ['https://ocho1511.github.io'];
 const MAX_EVENTS = 5000;
 const MAX_MEMBERS = 30;
@@ -413,6 +415,106 @@ function buildIcs(state) {
   return L.map(icsFold).join('\r\n') + '\r\n';
 }
 
+// ---- KI: eine gescannte Seite lesen und Termine vorschlagen (Claude API, offizielles SDK) ----
+const AI_MODEL = 'claude-opus-5-5';
+const AI_PER_DAY = 40;
+const AI_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+const nullable = (t) => ({ anyOf: [{ type: t }, { type: 'null' }] });
+const AI_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+    events: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { title: { type: 'string' }, date: { type: 'string' }, end_date: nullable('string'), time: nullable('string'), place: nullable('string'), category: nullable('string'), person: nullable('string'), note: nullable('string') },
+        required: ['title', 'date', 'end_date', 'time', 'place', 'category', 'person', 'note'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['summary', 'events'],
+  additionalProperties: false,
+};
+function aiSystem(today, weekday, catNames, memberNames) {
+  return 'Du liest eingescannte oder fotografierte Seiten (Briefe von der Schule, Elternbriefe, Einladungen, Flyer, Stundenpläne, Screenshots) und findest alle konkreten Termine darauf. '
+    + 'Heute ist ' + weekday + ', der ' + today + '. '
+    + 'Gib nur Termine zurück, die klar auf der Seite stehen. Erfinde nichts. Steht keiner auf der Seite, gib eine leere Liste zurück. '
+    + 'Datum immer als YYYY-MM-DD. Fehlt das Jahr, nimm das nächste Datum in der Zukunft. Bei mehrtägigen Terminen ist end_date das letzte Datum, sonst null. '
+    + 'Uhrzeit als HH:MM im 24-Stunden-Format, sonst null. Der Titel ist kurz (höchstens 60 Zeichen) und enthält kein Datum. Ort nur, wenn er genannt wird. '
+    + 'category: genau einer der Werte [' + catNames.join(', ') + '] oder null. '
+    + 'person: genau einer der Namen [' + memberNames.join(', ') + '], wenn die Seite erkennen lässt, für wen der Termin gilt (zum Beispiel der Name des Kindes), sonst null. '
+    + 'note: wichtige Zusatzangaben kurz (mitbringen, Kosten, Anmeldefrist, Ansprechpartner), sonst null. summary: ein Satz auf Deutsch, worum es auf der Seite geht.';
+}
+function cleanAiEvents(list, catNames, memberNames) {
+  const out = [];
+  for (const e of Array.isArray(list) ? list : []) {
+    if (out.length >= 20 || !e) continue;
+    const title = str(e.title, 120).replace(/[\r\n\t]+/g, ' ').trim();
+    const date = DATE_RE.test(e.date || '') && e.date >= '2000-01-01' && e.date <= '2100-12-31' ? e.date : '';
+    if (!title || !date) continue;
+    out.push({
+      title, date,
+      end_date: DATE_RE.test(e.end_date || '') && e.end_date > date ? e.end_date : '',
+      time: TIME_RE.test(e.time || '') ? e.time : '',
+      place: str(e.place, 80).replace(/[\r\n\t]+/g, ' ').trim(),
+      category: catNames.includes(e.category) ? e.category : '',
+      person: memberNames.includes(e.person) ? e.person : '',
+      note: str(e.note, 500).trim(),
+    });
+  }
+  return out;
+}
+async function aiExtract(env, state, body) {
+  const type = String(body.type || '').toLowerCase();
+  const data = String(body.data || '');
+  if (!AI_TYPES.includes(type)) return { ok: false, error: 'Nur PDF, JPEG, PNG oder WebP' };
+  if (!/^[A-Za-z0-9+/=]+$/.test(data) || data.length < 100) return { ok: false, error: 'Die Datei ist leer oder ungueltig' };
+  if (data.length > 5600000) return { ok: false, error: 'Die Datei ist zu gross (max. etwa 4 MB)' };
+  const dayKey = 'ai:' + new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+  const used = parseInt((await env.KV.get(dayKey)) || '0', 10) || 0;
+  if (used >= AI_PER_DAY) return { ok: false, error: 'Das Tageslimit fuer KI-Auswertungen ist erreicht (' + AI_PER_DAY + '). Morgen geht es wieder.' };
+  await env.KV.put(dayKey, String(used + 1), { expirationTtl: 60 * 60 * 30 });
+  const catNames = (state.cats && state.cats.length ? state.cats : DEFAULT_CATS).map((x) => x.name);
+  const memberNames = (state.members || []).map((m) => m.name);
+  const now = new Date();
+  const today = now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+  const weekday = now.toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'long' });
+  const client = new Anthropic({ apiKey: String(env.ANTHROPIC_API_KEY).trim(), maxRetries: 1, timeout: 90000 });
+  const block = type === 'application/pdf'
+    ? { type: 'document', source: { type: 'base64', media_type: type, data } }
+    : { type: 'image', source: { type: 'base64', media_type: type, data } };
+  const params = {
+    model: AI_MODEL,
+    max_tokens: 6000,
+    system: aiSystem(today, weekday, catNames, memberNames),
+    messages: [{ role: 'user', content: [block, { type: 'text', text: 'Lies die Seite und gib alle Termine als JSON zurück.' }] }],
+    output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
+  };
+  try {
+    let msg;
+    try {
+      // Bei einer Ablehnung durch die Sicherheitsfilter springt die API selbst auf ein Ersatzmodell
+      msg = await client.beta.messages.create({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+    } catch (e) {
+      if (!(e instanceof Anthropic.BadRequestError)) throw e;
+      msg = await client.messages.create(params);
+    }
+    if (msg.stop_reason === 'refusal') return { ok: false, error: 'Die KI hat diese Seite nicht ausgewertet.' };
+    const text = (msg.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: 'Die Antwort der KI war nicht lesbar. Bitte noch einmal versuchen.' }; }
+    return { ok: true, summary: str(parsed.summary, 300), events: cleanAiEvents(parsed.events, catNames, memberNames) };
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) return { ok: false, error: 'Der API-Schluessel wurde abgelehnt. Bitte pruefen.' };
+    if (e instanceof Anthropic.RateLimitError) return { ok: false, error: 'Gerade zu viele Anfragen. Bitte in einer Minute noch einmal.' };
+    if (e instanceof Anthropic.BadRequestError) return { ok: false, error: 'Die Anfrage wurde abgelehnt: ' + str(e.message, 200) };
+    if (e instanceof Anthropic.APIError) return { ok: false, error: 'Fehler bei der KI (Status ' + e.status + ').' };
+    return { ok: false, error: 'Die KI ist gerade nicht erreichbar.' };
+  }
+}
+
 const ATT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 const MAX_ATT = 9 * 1024 * 1024;
 const MAX_ATT_PER_EVENT = 5;
@@ -478,7 +580,7 @@ export default {
     if (request.method !== 'POST') return reply({ error: 'POST erwartet' }, 405, c);
     if (!env.KV || !env.FAMILY_PASSWORD) return reply({ error: 'Worker nicht eingerichtet' }, 500, c);
 
-    if (Number(request.headers.get('content-length') || 0) > 2000000) return reply({ error: 'Anfrage zu gross' }, 413, c);
+    if (Number(request.headers.get('content-length') || 0) > 6000000) return reply({ error: 'Anfrage zu gross' }, 413, c);
     let body;
     try { body = await request.json(); } catch (e) { return reply({ error: 'Ungueltige Anfrage' }, 400, c); }
 
@@ -493,6 +595,11 @@ export default {
     state.members = state.members || [];
     state.events = state.events || [];
 
+    if (body.op === 'ai_status') return reply({ configured: !!env.ANTHROPIC_API_KEY, model: AI_MODEL, perDay: AI_PER_DAY }, 200, c);
+    if (body.op === 'ai_extract') {
+      if (!env.ANTHROPIC_API_KEY) return reply({ ok: false, error: 'Die KI ist im Worker noch nicht eingerichtet (ANTHROPIC_API_KEY fehlt)' }, 200, c);
+      return reply(await aiExtract(env, state, body), 200, c);
+    }
     if (body.op === 'notify_status') {
       return reply({ sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
     }

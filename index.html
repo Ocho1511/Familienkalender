@@ -230,6 +230,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       <div class="sub" id="status">Wird geladen …</div>
     </div>
     <div class="actions">
+      <button class="btn ghost" id="btnAi" type="button">Seite scannen (KI)</button>
       <button class="btn ghost" id="btnRemind" type="button">Erinnerungen</button>
       <button class="btn ghost" id="btnOutlook" type="button">Outlook</button>
       <button class="btn ghost" id="btnPeople" type="button">Personen</button>
@@ -408,6 +409,23 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <p class="sub" style="margin:0"><strong>Outlook (Web, outlook.com):</strong> Kalender hinzufügen, dann Aus dem Internet abonnieren, Link einfügen.<br><strong>Outlook (Windows, neu):</strong> Kalender hinzufügen, dann Aus dem Internet abonnieren.<br><strong>Outlook (Windows, klassisch):</strong> Kalender öffnen, dann Aus dem Internet.<br>Outlook aktualisiert abonnierte Kalender alle paar Stunden. Neue Einträge erscheinen deshalb mit Verzögerung.</p>
     <div class="err" id="oErr" role="alert"></div>
     <div class="actions"><button class="btn ghost" id="oClose" type="button">Schließen</button></div>
+  </div>
+</div>
+
+<div class="modal" id="kModal" hidden style="z-index:25">
+  <div class="sheet">
+    <h2>Seite scannen, Termine eintragen</h2>
+    <p class="sub" id="kInfo" style="margin:0">Scanne oder fotografiere eine Seite, zum Beispiel einen Elternbrief. Die KI liest sie und schlägt Termine vor. Du prüfst alles, bevor etwas eingetragen wird.</p>
+    <div class="actions" style="justify-content:flex-start">
+      <button type="button" class="btn" id="kScan">Dokument scannen oder Datei wählen</button>
+      <button type="button" class="btn ghost" id="kPhoto">Foto aufnehmen</button>
+    </div>
+    <input type="file" id="kFile" accept="application/pdf,image/*" hidden>
+    <input type="file" id="kCam" accept="image/*" capture="environment" hidden>
+    <div class="sub" id="kStatus" role="status"></div>
+    <div class="list" id="kList"></div>
+    <div class="err" id="kMsg" role="alert"></div>
+    <div class="actions"><button class="btn" id="kSave" type="button" hidden>Ausgewählte Termine eintragen</button><button class="btn ghost" id="kClose" type="button">Schließen</button></div>
   </div>
 </div>
 
@@ -1452,6 +1470,100 @@ body:has(.modal:not([hidden])) .totop{display:none}
   $('cClose').onclick=function(){$('cModal').hidden=true};
   $('cModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
 
+  /* ---- KI: Seite scannen und Termine vorschlagen ---- */
+  var kBlob=null,kName='',kType='',kFound=[];
+  function toBase64(blob){
+    return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(String(r.result).split(',')[1]||'')};r.onerror=function(){rej(new Error('Datei nicht lesbar'))};r.readAsDataURL(blob)});
+  }
+  function memberByName(n){for(var i=0;i<members.length;i++)if(members[i].name===n)return members[i];return null}
+  function kField(lab,type,val){
+    var l=el('label',null,lab),i=document.createElement(type==='area'?'textarea':'input');
+    if(type==='area')i.rows=2;else i.type=type;i.value=val||'';l.appendChild(i);return {lab:l,input:i};
+  }
+  function renderFound(){
+    var box=$('kList');box.textContent='';
+    kFound.forEach(function(f){
+      var card=el('div','catrow');
+      var head=el('label','chk');var cb=document.createElement('input');cb.type='checkbox';cb.checked=f.use;
+      cb.onchange=function(){f.use=cb.checked;updSave()};head.appendChild(cb);head.appendChild(document.createTextNode(' Eintragen'));
+      if(f.dup){var d=el('span','sub',' (Diesen Termin gibt es schon)');head.appendChild(d)}
+      card.appendChild(head);
+      var t=kField('Titel','text',f.title),d1=kField('Datum','date',f.date),d2=kField('Bis (optional)','date',f.end_date),tm=kField('Uhrzeit','time',f.time),pl=kField('Ort','text',f.place),nt=kField('Notiz','area',f.note);
+      t.input.maxLength=120;pl.input.maxLength=80;nt.input.maxLength=500;
+      var sc=document.createElement('select');cats.forEach(function(c){var o=el('option',null,c.name);o.value=c.name;sc.appendChild(o)});sc.value=f.category||'Termin';if(!sc.value)sc.value=cats[0].name;
+      var sw=document.createElement('select');var o0=el('option',null,'Alle');o0.value='';sw.appendChild(o0);members.forEach(function(m){var o=el('option',null,m.name);o.value=m.id;sw.appendChild(o)});sw.value=f.who||'';
+      var l1=el('label',null,'Art');l1.appendChild(sc);var l2=el('label',null,'Wer');l2.appendChild(sw);
+      t.input.oninput=function(){f.title=t.input.value};d1.input.onchange=function(){f.date=d1.input.value};d2.input.onchange=function(){f.end_date=d2.input.value};
+      tm.input.onchange=function(){f.time=tm.input.value};pl.input.oninput=function(){f.place=pl.input.value};nt.input.oninput=function(){f.note=nt.input.value};
+      sc.onchange=function(){f.category=sc.value};sw.onchange=function(){f.who=sw.value};
+      [t.lab,d1.lab,d2.lab,tm.lab,pl.lab,l1,l2,nt.lab].forEach(function(x){card.appendChild(x)});
+      box.appendChild(card);
+    });
+    updSave();
+  }
+  function updSave(){var n=kFound.filter(function(f){return f.use}).length;$('kSave').hidden=!kFound.length;$('kSave').textContent=n===1?'1 Termin eintragen':n+' Termine eintragen';$('kSave').disabled=!n}
+  $('btnAi').onclick=function(){
+    kBlob=null;kFound=[];$('kList').textContent='';$('kMsg').textContent='';$('kStatus').textContent='';$('kSave').hidden=true;$('kModal').hidden=false;$('kModal').scrollTop=0;
+    ['kScan','kPhoto'].forEach(function(id){$(id).disabled=true});
+    call({op:'ai_status'}).then(function(j){
+      if(j.configured){['kScan','kPhoto'].forEach(function(id){$(id).disabled=false})}
+      else $('kStatus').textContent='Die KI ist noch nicht eingerichtet. Im Worker fehlt der Schlüssel ANTHROPIC_API_KEY (Anleitung: AI_SETUP.md im Repo).';
+    }).catch(function(){$('kStatus').textContent='Der Status ist gerade nicht abrufbar.'});
+  };
+  $('kScan').onclick=function(){$('kFile').click()};
+  $('kPhoto').onclick=function(){$('kCam').click()};
+  function readPage(file){
+    $('kMsg').textContent='';kFound=[];$('kList').textContent='';$('kSave').hidden=true;
+    var isPdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name);
+    var prep=isPdf?Promise.resolve({blob:file,type:'application/pdf',name:file.name||'Seite.pdf'}):compressImage(file).then(function(b){return {blob:b,type:'image/jpeg',name:(file.name||'Scan').replace(/\.\w+$/,'')+'.jpg'}});
+    if(!isPdf&&!/^image\//.test(file.type)&&!/\.(jpe?g|png|webp|heic)$/i.test(file.name)){$('kMsg').textContent='Erlaubt sind PDF-Dateien und Fotos.';return}
+    $('kStatus').textContent='Die Seite wird gelesen … das kann bis zu einer halben Minute dauern.';
+    ['kScan','kPhoto'].forEach(function(id){$(id).disabled=true});
+    prep.then(function(p){
+      if(p.blob.size>4*1024*1024)throw new Error('Die Datei ist zu groß (maximal 4 MB). Scanne weniger Seiten auf einmal.');
+      kBlob=p.blob;kName=p.name;kType=p.type;
+      return toBase64(p.blob).then(function(data){return call({op:'ai_extract',type:p.type,data:data})});
+    }).then(function(j){
+      ['kScan','kPhoto'].forEach(function(id){$(id).disabled=false});
+      if(!j.ok){$('kStatus').textContent='';$('kMsg').textContent=j.error||'Das Auslesen hat nicht geklappt.';return}
+      $('kStatus').textContent=j.summary||'';
+      if(!j.events.length){$('kMsg').textContent='Auf dieser Seite wurden keine Termine gefunden.';return}
+      kFound=j.events.map(function(e){
+        var m=memberByName(e.person);
+        return {use:true,title:e.title,date:e.date,end_date:e.end_date,time:e.time,place:e.place,note:e.note,category:e.category,who:m?m.id:'',
+          dup:events.some(function(x){return x.start===e.date&&String(x.title).toLowerCase()===e.title.toLowerCase()})};
+      });
+      kFound.forEach(function(f){if(f.dup)f.use=false});
+      renderFound();
+    }).catch(function(e){
+      ['kScan','kPhoto'].forEach(function(id){$(id).disabled=false});
+      $('kStatus').textContent='';$('kMsg').textContent=e&&e.message?e.message:'Das Auslesen hat nicht geklappt.';
+    });
+  }
+  ['kFile','kCam'].forEach(function(id){$(id).addEventListener('change',function(){var f=this.files&&this.files[0];this.value='';if(f)readPage(f)})});
+  $('kSave').onclick=function(){
+    var todo=kFound.filter(function(f){return f.use&&f.title.trim()&&f.date});
+    if(!todo.length){$('kMsg').textContent='Es ist kein vollständiger Termin ausgewählt (Titel und Datum).';return}
+    $('kSave').disabled=true;$('kMsg').textContent='Wird eingetragen …';
+    var firstDate=todo[0].date,failed=0;
+    todo.reduce(function(p,f){
+      return p.then(function(){
+        var id=uid();
+        var item={id:id,title:f.title.trim(),who:f.who||'',cat:f.category||'Termin',start:f.date,end:f.end_date&&f.end_date>f.date?f.end_date:'',time:f.time||'',place:(f.place||'').trim(),note:(f.note||'').trim(),remind:null,createdAt:Date.now()};
+        return call({op:'put',kind:'event',item:item}).then(apply).then(function(){return kBlob?uploadAtt(id,kBlob,kName,kType).then(apply).catch(function(){failed++}):null});
+      });
+    },Promise.resolve()).then(function(){
+      $('kMsg').textContent='';
+      selected=firstDate;var d=parse(firstDate);view=new Date(d.getFullYear(),d.getMonth(),1);
+      $('kModal').hidden=true;jumpTo(firstDate,null);
+      if(failed)alert_failed(failed);
+    }).catch(function(){$('kSave').disabled=false;$('kMsg').textContent='Das Eintragen hat nicht geklappt. Bitte noch einmal versuchen.'});
+  };
+  function alert_failed(n){setStatusMsg(n+' Anlage(n) ließ(en) sich nicht speichern. Die Termine sind eingetragen.')}
+  function setStatusMsg(t){var s=$('status');var old=s.textContent;s.textContent=t;s.className='sub state warn';setTimeout(function(){refreshStatus()},6000)}
+  $('kClose').onclick=function(){$('kModal').hidden=true};
+  $('kModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
+
   /* ---- Outlook ---- */
   $('btnOutlook').onclick=function(){
     $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oModal').hidden=false;
@@ -1487,7 +1599,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     b.onclick=function(){try{window.scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo(0,0)}};
     upd();
   })();
-  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true;$('rModal').hidden=true;$('aModal').hidden=true;$('nModal').hidden=true;$('cModal').hidden=true}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true;$('rModal').hidden=true;$('aModal').hidden=true;$('nModal').hidden=true;$('cModal').hidden=true;$('kModal').hidden=true}});
 
   setTimeout(function(){var sp=$('splash');if(!sp)return;sp.classList.add('out');setTimeout(function(){sp.parentNode&&sp.parentNode.removeChild(sp)},700)},2000);
   if('serviceWorker' in navigator){try{navigator.serviceWorker.register('sw.js').catch(function(){})}catch(e){}}
