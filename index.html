@@ -1018,7 +1018,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     });
   }
   $('btnPeople').onclick=function(){
-    pickColor=COLORS[members.length%COLORS.length];renderSwatches();renderPeopleList();$('pErr').textContent='';$('pModal').hidden=false;$('pName').focus();
+    pickColor=COLORS[members.length%COLORS.length];renderSwatches();renderPeopleList();$('pErr').textContent='';$('pModal').hidden=false;$('pModal').scrollTop=0;
   };
   $('pClose').onclick=function(){$('pModal').hidden=true};
   $('pModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
