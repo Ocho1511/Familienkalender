@@ -90,6 +90,9 @@ function cleanEvent(e) {
     note: str(e.note, 500).trim(), createdAt: Number(e.createdAt) || Date.now(),
     remind: hasRemind ? Number(e.remind) : undefined,
     remindWa: hasRemind && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
+    remindSms: hasRemind && e.remindSms === true ? true : undefined,
+    remindMail: hasRemind && e.remindMail === true ? true : undefined,
+    remindCall: hasRemind && e.remindCall === true ? true : undefined,
     repeat, until,
     skip: repeat && Array.isArray(e.skip) ? (() => { const a = [...new Set(e.skip.filter((x) => DATE_RE.test(x || '')))].sort().slice(0, 100); return a.length ? a : undefined; })() : undefined,
     place: str(e.place, 80).replace(/[\r\n\t]+/g, ' ').trim() || undefined,
@@ -187,6 +190,54 @@ function occDates(e, from, to) {
   }
   return out;
 }
+// ---- Weitere Kanaele: SMS und Anruf mit Sprachnachricht (Twilio), E-Mail (Brevo) ----
+const smsConfigured = (env) => !!(env.TWILIO_SID && env.TWILIO_TOKEN && env.TWILIO_FROM);
+const mailConfigured = (env) => !!(env.BREVO_KEY && env.MAIL_FROM);
+const DEFAULT_TEXTS = {
+  smsText: 'Erinnerung Familienkalender: {titel}, {datum} {zeit}{ort} ({wer}, {vorlauf})',
+  voiceText: 'Hallo {name}. Erinnerung vom Familienkalender. {titel}, am {datum}, {zeit}. {vorlauf}.',
+  mailSubject: 'Erinnerung: {titel} am {datum}',
+  mailText: 'Hallo {name},\n\nzur Erinnerung: {titel}\nWann: {datum}, {zeit}\nWo: {ortText}\nFür: {wer}\n\nDein Familienkalender',
+};
+const TEXT_LIMITS = { smsText: 300, voiceText: 400, mailSubject: 150, mailText: 1500 };
+function cleanTexts(t) {
+  const out = {};
+  if (t && typeof t === 'object') Object.keys(DEFAULT_TEXTS).forEach((k) => { if (typeof t[k] === 'string' && t[k].trim()) out[k] = t[k].slice(0, TEXT_LIMITS[k]); });
+  return out;
+}
+async function getTexts(env) { return { ...DEFAULT_TEXTS, ...cleanTexts(await env.KV.get('settings', 'json')) }; }
+const fillText = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] !== undefined ? v[k] : m));
+const xmlEsc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+async function twilio(env, path, params) {
+  const r = await fetch('https://api.twilio.com/2010-04-01/Accounts/' + encodeURIComponent(env.TWILIO_SID) + '/' + path, {
+    method: 'POST',
+    headers: { Authorization: 'Basic ' + btoa(env.TWILIO_SID + ':' + String(env.TWILIO_TOKEN).trim()), 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString(),
+  });
+  let detail = '';
+  try { const j = await r.json(); detail = (j && j.message) || ''; } catch (e) { /* kein JSON */ }
+  return { ok: r.ok, status: r.status, detail };
+}
+const smsSend = (env, to, text) => twilio(env, 'Messages.json', { To: '+' + to, From: env.TWILIO_FROM, Body: text });
+const callSend = (env, to, text) => twilio(env, 'Calls.json', { To: '+' + to, From: env.TWILIO_FROM, Twiml: '<Response><Say language="de-DE" voice="alice">' + xmlEsc(text) + '</Say></Response>' });
+async function mailSend(env, toEmail, toName, subject, text) {
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': String(env.BREVO_KEY).trim(), 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: { name: env.MAIL_NAME || 'Familienkalender', email: String(env.MAIL_FROM).trim() }, to: [{ email: toEmail, name: toName }], subject, textContent: text }),
+  });
+  let detail = '';
+  try { const j = await r.json(); detail = (j && j.message) || ''; } catch (e) { /* kein JSON */ }
+  return { ok: r.ok, status: r.status, detail };
+}
+// Eine Nachricht ueber einen Kanal an eine Person senden
+async function sendChannel(env, ch, m, v, texts) {
+  const vars = { ...v, name: m.name };
+  if (ch === 'sms') return smsSend(env, waNumber(m.phone || m.whatsapp), fillText(texts.smsText, vars));
+  if (ch === 'call') return callSend(env, waNumber(m.phone || m.whatsapp), fillText(texts.voiceText, vars));
+  if (ch === 'mail') return mailSend(env, m.email, m.name, fillText(texts.mailSubject, vars), fillText(texts.mailText, vars));
+  return { ok: false, status: 0, detail: 'Unbekannter Kanal' };
+}
 const deDate = (s) => s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4);
 
 async function runReminders(env) {
@@ -201,6 +252,7 @@ async function runReminders(env) {
   const outbox = {};
   const sentKeys = [];
   const waQueue = [];
+  const chQueue = [];
   const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -216,6 +268,11 @@ async function runReminders(env) {
       sentKeys.push(dk);
       const who = e.who && names[e.who] ? names[e.who] : 'Alle';
       add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) + (e.place ? ' · ' + e.place : '') });
+      const rec2 = (state.members || []).filter((m) => !e.who || m.id === e.who);
+      const vars = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: leadText(e.remind) };
+      if (e.remindSms && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'sms', m, v: vars }));
+      if (e.remindCall && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'call', m, v: vars }));
+      if (e.remindMail && mailConfigured(env)) rec2.filter((m) => m.email).forEach((m) => chQueue.push({ ch: 'mail', m, v: vars }));
       if (e.remindWa && waConfigured(env)) {
         const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
         rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(date) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(e.remind) + ')', who] }));
@@ -237,6 +294,13 @@ async function runReminders(env) {
   for (const h of Object.keys(outbox)) {
     const st = await sendPush(env, h, subs[h].endpoint, outbox[h]).catch(() => 0);
     if (st === 404 || st === 410) { delete subs[h]; changed = true; }
+  }
+  if (chQueue.length) {
+    const texts = await getTexts(env);
+    for (const q of chQueue) {
+      const res = await sendChannel(env, q.ch, q.m, q.v, texts).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }));
+      if (!res.ok) console.log('Kanal fehlgeschlagen', q.ch, res.status, res.detail);
+    }
   }
   for (const w of waQueue) {
     const res = await waSend(env, w.to, w.params).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }));
@@ -350,6 +414,24 @@ export default {
     state.members = state.members || [];
     state.events = state.events || [];
 
+    if (body.op === 'notify_status') {
+      return reply({ sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
+    }
+    if (body.op === 'settings_put') {
+      await env.KV.put('settings', JSON.stringify(cleanTexts(body.texts)));
+      return reply({ texts: await getTexts(env) }, 200, c);
+    }
+    if (body.op === 'notify_test') {
+      const ch = String(body.channel || '');
+      if (!['sms', 'call', 'mail'].includes(ch)) return reply({ ok: false, error: 'Unbekannter Kanal' }, 200, c);
+      if (ch === 'mail' ? !mailConfigured(env) : !smsConfigured(env)) return reply({ ok: false, error: 'Dieser Kanal ist im Worker noch nicht eingerichtet' }, 200, c);
+      const m = state.members.find((x) => x.id === body.memberId);
+      if (!m) return reply({ ok: false, error: 'Person nicht gefunden' }, 200, c);
+      if (ch === 'mail' ? !m.email : !waNumber(m.phone || m.whatsapp)) return reply({ ok: false, error: ch === 'mail' ? 'Fuer diese Person ist keine E-Mail-Adresse hinterlegt' : 'Fuer diese Person ist keine Handynummer hinterlegt' }, 200, c);
+      const v = { titel: 'Testnachricht', datum: deDate(new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' })), zeit: 'um 12:00 Uhr', ort: '', ortText: '–', wer: m.name, vorlauf: 'jetzt' };
+      const res = await sendChannel(env, ch, m, v, await getTexts(env)).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }));
+      return reply({ ok: res.ok, status: res.status, detail: res.detail }, 200, c);
+    }
     if (body.op === 'wa_status') {
       return reply({ configured: waConfigured(env), template: waConfigured(env) ? env.WA_TEMPLATE : '' }, 200, c);
     }

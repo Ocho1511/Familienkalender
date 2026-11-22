@@ -338,7 +338,11 @@ body:has(.modal:not([hidden])) .totop{display:none}
       </select>
     </label>
     <div class="sub" style="margin-top:-6px">Ohne Uhrzeit kommt die Erinnerung um 9 Uhr. Sie geht an die Person des Eintrags, bei „Alle" an alle.</div>
-    <label class="chk" for="fRemindWa"><input type="checkbox" id="fRemindWa"> Zusätzlich per WhatsApp erinnern</label>
+    <div class="sub" style="margin-bottom:-4px">Zusätzlich erinnern per:</div>
+    <label class="chk" for="fRemindWa"><input type="checkbox" id="fRemindWa"> WhatsApp</label>
+    <label class="chk" for="fRemindSms"><input type="checkbox" id="fRemindSms"> SMS</label>
+    <label class="chk" for="fRemindMail"><input type="checkbox" id="fRemindMail"> E-Mail</label>
+    <label class="chk" for="fRemindCall"><input type="checkbox" id="fRemindCall"> Kurzer Anruf mit Sprachnachricht</label>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
     <div class="send" id="evSeries" hidden></div>
     <div id="evSendBox"></div>
@@ -389,6 +393,24 @@ body:has(.modal:not([hidden])) .totop{display:none}
   </div>
 </div>
 
+<div class="modal" id="nModal" hidden style="z-index:25">
+  <div class="sheet">
+    <h2>SMS, E-Mail und Anruf</h2>
+    <ul class="list" id="nStatus"></ul>
+    <label for="nWho">Test an <select id="nWho"></select></label>
+    <div class="actions"><button class="btn ghost sm" id="nTestSms" type="button">SMS-Test</button><button class="btn ghost sm" id="nTestMail" type="button">E-Mail-Test</button><button class="btn ghost sm" id="nTestCall" type="button">Anruf-Test</button></div>
+    <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
+    <label for="nSms">SMS-Text <textarea id="nSms" rows="3" maxlength="300"></textarea></label>
+    <label for="nVoice">Sprachnachricht beim Anruf <textarea id="nVoice" rows="3" maxlength="400"></textarea></label>
+    <label for="nSubj">E-Mail-Betreff <input id="nSubj" maxlength="150"></label>
+    <label for="nMail">E-Mail-Text <textarea id="nMail" rows="6" maxlength="1500"></textarea></label>
+    <p class="sub" style="margin:0">Platzhalter: {name} {titel} {datum} {zeit} {ort} {wer} {vorlauf}. {zeit} ergibt „um 15:30 Uhr" oder „ganztägig", {vorlauf} zum Beispiel „in 1 Std.".</p>
+    <div class="err" id="nMsg" role="alert"></div>
+    <div class="actions"><button class="btn ghost sm" id="nReset" type="button">Standardtexte</button><button class="btn sm" id="nSave" type="button">Texte speichern</button></div>
+    <div class="actions"><button class="btn ghost" id="nClose" type="button">Schließen</button></div>
+  </div>
+</div>
+
 <div class="modal" id="rModal" hidden>
   <div class="sheet">
     <h2>Erinnerungen aufs Handy</h2>
@@ -400,6 +422,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <p class="sub" id="wInfo" style="margin:0"></p>
     <label for="wWho">WhatsApp-Test an <select id="wWho"></select></label>
     <div class="actions"><button class="btn ghost sm" id="wTest" type="button">WhatsApp-Test senden</button></div>
+    <div class="actions"><button class="btn ghost sm" id="btnChannels" type="button">SMS, E-Mail und Anruf einstellen</button></div>
     <div class="err" id="rMsg" role="alert"></div>
     <div class="actions"><button class="btn ghost" id="rClose" type="button">Schließen</button></div>
   </div>
@@ -858,7 +881,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     $('fTime').value=e&&e.time?e.time:'';
     $('fNote').value=e&&e.note?e.note:'';
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';
-    $('fRemindWa').checked=!!(e&&e.remindWa);
+    $('fRemindWa').checked=!!(e&&e.remindWa);$('fRemindSms').checked=!!(e&&e.remindSms);$('fRemindMail').checked=!!(e&&e.remindMail);$('fRemindCall').checked=!!(e&&e.remindCall);
     $('fRepeat').value=e&&e.repeat?e.repeat:'';$('fUntil').value=e&&e.until?e.until:'';$('fPlace').value=e&&e.place?e.place:'';syncRepeat();
     var sb=$('evSendBox');sb.textContent='';if(e)sb.appendChild(sendBox(e,day||(e.repeat?selected:e.start)));
     var se=$('evSeries');se.textContent='';se.hidden=true;
@@ -891,6 +914,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:$('fRepeat').value?'':end,time:$('fTime').value,note:$('fNote').value.trim(),
       remind:$('fRemind').value===''?null:Number($('fRemind').value),
       remindWa:$('fRemind').value!==''&&$('fRemindWa').checked,
+      remindSms:$('fRemind').value!==''&&$('fRemindSms').checked,remindMail:$('fRemind').value!==''&&$('fRemindMail').checked,remindCall:$('fRemind').value!==''&&$('fRemindCall').checked,
       repeat:$('fRepeat').value||undefined,until:$('fRepeat').value?$('fUntil').value:'',place:$('fPlace').value.trim(),
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
@@ -1145,6 +1169,47 @@ body:has(.modal:not([hidden])) .totop{display:none}
     }).catch(function(e){rmsg('Test fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
   };
 
+  /* ---- SMS, E-Mail und Anruf: Status, Tests und Texte ---- */
+  var nDefaults=null;
+  function nmsg(t){$('nMsg').textContent=t}
+  function fillTexts(t){$('nSms').value=t.smsText;$('nVoice').value=t.voiceText;$('nSubj').value=t.mailSubject;$('nMail').value=t.mailText}
+  $('btnChannels').onclick=function(){
+    var w=$('nWho');w.textContent='';
+    var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
+    members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
+    w.value=load('fk-me')||'';nmsg('');$('nModal').hidden=false;$('nModal').scrollTop=0;
+    var st=$('nStatus');st.textContent='';st.appendChild(el('li','empty','Status wird geprüft …'));
+    call({op:'notify_status'}).then(function(j){
+      nDefaults=j.defaults;st.textContent='';
+      [['SMS',j.sms],['Anruf mit Sprachnachricht',j.call],['E-Mail',j.mail]].forEach(function(x){
+        var li=el('li','item');li.style.setProperty('--c',x[1]?'#2f6b57':'#b3372c');
+        var b=el('div','body');b.appendChild(el('div','t',x[0]));
+        b.appendChild(el('div','m',x[1]?'eingerichtet':'noch nicht eingerichtet (Anleitung: NOTIFY_SETUP.md im Repo)'));
+        li.appendChild(b);st.appendChild(li);
+      });
+      $('nTestSms').disabled=!j.sms;$('nTestCall').disabled=!j.call;$('nTestMail').disabled=!j.mail;
+      fillTexts(j.texts);
+    }).catch(function(){st.textContent='';st.appendChild(el('li','empty','Der Status ist gerade nicht abrufbar.'))});
+  };
+  function nTest(ch){
+    var id=$('nWho').value;
+    if(!id){nmsg('Bitte zuerst wählen, an wen der Test gehen soll.');return}
+    nmsg('Wird gesendet …');
+    call({op:'notify_test',channel:ch,memberId:id}).then(function(j){
+      nmsg(j.ok?(ch==='call'?'Anruf ausgelöst. Das Telefon klingelt gleich.':'Test gesendet.'):'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
+    }).catch(function(e){nmsg('Fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
+  }
+  $('nTestSms').onclick=function(){nTest('sms')};
+  $('nTestMail').onclick=function(){nTest('mail')};
+  $('nTestCall').onclick=function(){nTest('call')};
+  $('nSave').onclick=function(){
+    call({op:'settings_put',texts:{smsText:$('nSms').value,voiceText:$('nVoice').value,mailSubject:$('nSubj').value,mailText:$('nMail').value}})
+      .then(function(j){fillTexts(j.texts);nmsg('Texte gespeichert.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')});
+  };
+  $('nReset').onclick=function(){if(nDefaults){fillTexts(nDefaults);nmsg('Standardtexte eingesetzt. Zum Übernehmen speichern.')}};
+  $('nClose').onclick=function(){$('nModal').hidden=true};
+  $('nModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
+
   /* ---- Outlook ---- */
   $('btnOutlook').onclick=function(){
     $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oModal').hidden=false;
@@ -1180,7 +1245,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     b.onclick=function(){try{window.scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo(0,0)}};
     upd();
   })();
-  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true;$('rModal').hidden=true;$('aModal').hidden=true}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true;$('rModal').hidden=true;$('aModal').hidden=true;$('nModal').hidden=true}});
 
   setTimeout(function(){var sp=$('splash');if(!sp)return;sp.classList.add('out');setTimeout(function(){sp.parentNode&&sp.parentNode.removeChild(sp)},700)},2000);
   if('serviceWorker' in navigator){try{navigator.serviceWorker.register('sw.js').catch(function(){})}catch(e){}}
