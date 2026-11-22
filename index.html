@@ -394,6 +394,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <form id="pForm" class="list" autocomplete="off">
       <label for="pName">Neue Person <input id="pName" required maxlength="40" placeholder="Name"></label>
       <label for="pPhone">Mobilnummer für WhatsApp (optional) <input id="pPhone" type="tel" inputmode="tel" maxlength="30" placeholder="z. B. 0172 1234567"></label>
+      <label for="pEmail">E-Mail-Adresse (optional) <input id="pEmail" type="email" inputmode="email" maxlength="80" placeholder="z. B. name@example.de"></label>
       <div class="swatches" id="swatches" role="radiogroup" aria-label="Farbe"></div>
       <div class="err" id="pErr" role="alert"></div>
       <div class="actions">
@@ -1293,8 +1294,8 @@ body:has(.modal:not([hidden])) .totop{display:none}
     ev.preventDefault();
     var name=$('pName').value.trim();if(!name)return;
     var nid=uid();openData=nid;
-    write({op:'put',kind:'member',item:{id:nid,name:name,color:pickColor,createdAt:Date.now(),phone:$('pPhone').value.trim(),whatsapp:$('pPhone').value.trim()}},$('pErr')).then(function(){
-      $('pName').value='';$('pPhone').value='';$('pErr').textContent='';pickColor=COLORS[(members.length)%COLORS.length];renderSwatches();
+    write({op:'put',kind:'member',item:{id:nid,name:name,color:pickColor,createdAt:Date.now(),phone:$('pPhone').value.trim(),whatsapp:$('pPhone').value.trim(),email:$('pEmail').value.trim()}},$('pErr')).then(function(){
+      $('pName').value='';$('pPhone').value='';$('pEmail').value='';$('pErr').textContent='';pickColor=COLORS[(members.length)%COLORS.length];renderSwatches();
     }).catch(function(){});
   });
 
