@@ -1248,6 +1248,15 @@ body:has(.modal:not([hidden])) .totop{display:none}
         saveMember(m,distinct?{whatsapp:v}:{phone:v,whatsapp:v}).catch(function(){});
       });
       qf.appendChild(qi);qf.appendChild(qb);wrap.appendChild(qf);wrap.appendChild(qh);
+      var ef=el('form','mquick');
+      var ei=document.createElement('input');ei.type='email';ei.setAttribute('inputmode','email');ei.maxLength=80;ei.id='mqe_'+m.id;ei.autocomplete='off';
+      ei.placeholder='E-Mail-Adresse, z. B. name@example.de';ei.value=m.email||'';ei.setAttribute('aria-label','E-Mail-Adresse von '+m.name);
+      var eb=el('button','btn sm','Speichern');eb.type='submit';
+      var eh=el('div','minfo');
+      var eshow=function(){var v=ei.value.trim();eh.textContent=!v?'E-Mail fehlt (für den Versand per E-Mail nötig)':(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)?'Wird verwendet für E-Mail-Erinnerungen':'Die Adresse wirkt unvollständig');eh.style.color=(!v||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))?'var(--danger)':'var(--muted)'};
+      eshow();ei.addEventListener('input',eshow);
+      ef.addEventListener('submit',function(ev){ev.preventDefault();saveMember(m,{email:ei.value.trim()}).catch(function(){})});
+      ef.appendChild(ei);ef.appendChild(eb);wrap.appendChild(ef);wrap.appendChild(eh);
       if(openPick===m.id){
         var pal=el('div','pal');
         COLORS.forEach(function(c){
