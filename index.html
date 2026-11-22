@@ -47,6 +47,8 @@ button{cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn{background:var(--accent);color:var(--accent-fg);border:0;border-radius:8px;padding:9px 16px;font-weight:600}
 .btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line);font-weight:500}
+.dot{display:inline-block;width:.62em;height:.62em;border-radius:50%;margin-right:7px;vertical-align:baseline;background:#9aa3a0;box-shadow:0 0 0 1px rgba(0,0,0,.15)}
+.dot.on{background:#2f9b6b}.dot.bad{background:#c4392c}
 .btn.danger{background:transparent;color:var(--danger);border:1px solid var(--danger)}
 .btn.sm{padding:5px 10px;font-size:13px}
 .people{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -652,8 +654,9 @@ body:has(.modal:not([hidden])) .totop{display:none}
   function fixToday(){var t=iso(new Date());if(t!==today){today=t;renderAll()}}
   function startPolling(){
     if(startPolling.on)return;startPolling.on=true;
+    setTimeout(refreshDots,600);
     setInterval(function(){if(!document.hidden&&!busy&&pass){fixToday();pull()}},20000);
-    document.addEventListener('visibilitychange',function(){if(!document.hidden&&pass){fixToday();pull()}});
+    document.addEventListener('visibilitychange',function(){if(!document.hidden&&pass){fixToday();pull();refreshDots()}});
   }
   function write(payload,errBox){
     busy=true;
@@ -1330,8 +1333,33 @@ body:has(.modal:not([hidden])) .totop{display:none}
   function pushSupported(){return 'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window}
   function u8(b64){var p='='.repeat((4-b64.length%4)%4),t=(b64+p).replace(/-/g,'+').replace(/_/g,'/'),r=atob(t),a=new Uint8Array(r.length);for(var i=0;i<r.length;i++)a[i]=r.charCodeAt(i);return a}
   function getReg(){return navigator.serviceWorker.register('sw.js').then(function(){return navigator.serviceWorker.ready})}
+  /* Statuspunkte an den Knöpfen: grün = aktiv, grau = aus oder nicht eingerichtet, rot = blockiert */
+  function setDot(id,state,title){
+    var b=$(id);if(!b)return;
+    var d=b.querySelector('.dot');
+    if(!d){d=document.createElement('span');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild)}
+    d.className='dot'+(state==='on'?' on':state==='bad'?' bad':'');
+    b.title=title;b.setAttribute('data-state',state==='on'?'aktiv':state==='bad'?'blockiert':'aus');
+  }
+  function refreshDots(){
+    if(!pass)return;
+    if(isIos()&&!isStandalone()){setDot('btnRemind','off','Push: nur in der App vom Home-Bildschirm möglich')}
+    else if(!pushSupported()){setDot('btnRemind','off','Push: auf diesem Gerät nicht unterstützt')}
+    else getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){
+      if(sub)setDot('btnRemind','on','Push-Erinnerungen sind auf diesem Gerät an');
+      else if(Notification.permission==='denied')setDot('btnRemind','bad','Mitteilungen sind blockiert (iPhone-Einstellungen)');
+      else setDot('btnRemind','off','Push-Erinnerungen sind auf diesem Gerät aus');
+    }).catch(function(){});
+    call({op:'notify_status'}).then(function(j){
+      var any=j.sms||j.mail||j.call||j.wa;
+      if(!any)setDot('btnChannels','off','Kein Kanal eingerichtet');
+      else if(j.autoSend===false)setDot('btnChannels','off','Automatisches Senden ist aus');
+      else setDot('btnChannels','on','Automatisches Senden ist an');
+    }).catch(function(){});
+  }
   function rmsg(t){$('rMsg').textContent=t}
   function refreshRemind(){
+    refreshDots();
     var info=$('rInfo'),can=true;
     if(isIos()&&!isStandalone()){info.textContent='Auf dem iPhone geht das nur in der App vom Startbildschirm. Tippe in Safari auf Teilen, dann „Zum Home-Bildschirm", und öffne den Kalender von dort. Es braucht iOS 16.4 oder neuer.';can=false}
     else if(!pushSupported()){info.textContent='Dieses Gerät oder dieser Browser unterstützt keine Erinnerungen.';can=false}
@@ -1418,7 +1446,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     w.value=load('fk-me')||'';nmsg('');$('nModal').hidden=false;$('nModal').scrollTop=0;
     var st=$('nStatus');st.textContent='';st.appendChild(el('li','empty','Status wird geprüft …'));
     call({op:'notify_status'}).then(function(j){
-      nDefaults=j.defaults;st.textContent='';$('nAuto').checked=j.autoSend!==false;
+      nDefaults=j.defaults;st.textContent='';$('nAuto').checked=j.autoSend!==false;refreshDots();
       [['SMS',j.sms],['Anruf mit Sprachnachricht',j.call],['E-Mail',j.mail]].forEach(function(x){
         var li=el('li','item');li.style.setProperty('--c',x[1]?'#2f6b57':'#b3372c');
         var b=el('div','body');b.appendChild(el('div','t',x[0]));
@@ -1437,7 +1465,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       nmsg(j.ok?(ch==='call'?'Anruf ausgelöst. Das Telefon klingelt gleich.':'Test gesendet.'):'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
     }).catch(function(e){nmsg('Fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
   }
-  $('nAuto').onchange=function(){var on=this.checked;call({op:'settings_put',autoSend:on}).then(function(){nmsg(on?'Automatisches Senden ist an.':'Automatisches Senden ist aus. Es kommen nur Push-Meldungen.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')})};
+  $('nAuto').onchange=function(){var on=this.checked;call({op:'settings_put',autoSend:on}).then(function(){refreshDots();nmsg(on?'Automatisches Senden ist an.':'Automatisches Senden ist aus. Es kommen nur Push-Meldungen.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')})};
   $('nTestSms').onclick=function(){nTest('sms')};
   $('nTestMail').onclick=function(){nTest('mail')};
   $('nTestCall').onclick=function(){nTest('call')};
