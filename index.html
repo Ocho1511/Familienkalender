@@ -203,6 +203,8 @@ body:has(.modal:not([hidden])) .totop{display:none}
 .cathead{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .catgrid{display:flex;flex-wrap:wrap;gap:6px 14px}
 .catgrid[hidden]{display:none}
+.attbox{display:flex;flex-direction:column;gap:6px}
+.attbox .item{align-items:center}
 </style>
 </head>
 <body>
@@ -348,6 +350,18 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <label class="chk" for="fRemindMail"><input type="checkbox" id="fRemindMail"> E-Mail</label>
     <label class="chk" for="fRemindCall"><input type="checkbox" id="fRemindCall"> Kurzer Anruf mit Sprachnachricht</label>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
+    <div class="attbox" id="evAtt">
+      <div class="sub">Anlagen, z. B. ein Schreiben von der Schule</div>
+      <ul class="list" id="evAttList"></ul>
+      <div class="actions" style="justify-content:flex-start">
+        <button type="button" class="btn ghost sm" id="attScan">Dokument scannen oder Datei wählen</button>
+        <button type="button" class="btn ghost sm" id="attPhoto">Foto aufnehmen</button>
+      </div>
+      <input type="file" id="attFile" accept="application/pdf,image/*" multiple hidden>
+      <input type="file" id="attCam" accept="image/*" capture="environment" hidden>
+      <div class="sub">Auf dem iPhone bietet das Auswahlmenü die Scan-Funktion von iOS an (unter „Durchsuchen", Drei-Punkte-Menü, „Dokumente scannen"). Sie erkennt das Blatt, schneidet es zu und erstellt ein PDF.</div>
+      <div class="err" id="attMsg" role="status"></div>
+    </div>
     <div class="send" id="evSeries" hidden></div>
     <div id="evSendBox"></div>
     <div class="err" id="evErr" role="alert"></div>
@@ -824,6 +838,94 @@ body:has(.modal:not([hidden])) .totop{display:none}
     return box;
   }
 
+  /* ---- Anlagen: Scan (iOS-Dokumentenerkennung), Foto, Datei ---- */
+  var attPending=[];
+  function fmtSize(n){return n>=1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(n/1024))+' KB'}
+  function attMsg(t){var m=$('attMsg');if(m)m.textContent=t||''}
+  function uploadAtt(eventId,blob,name,type){
+    return fetch(API+'/att/put?e='+encodeURIComponent(eventId)+'&n='+encodeURIComponent(name)+'&t='+encodeURIComponent(type),{method:'POST',headers:{'X-Pass':pass,'Content-Type':type},body:blob})
+      .then(function(r){return r.json().then(function(j){if(!r.ok){var e=new Error(j.error||'Fehler');e.status=r.status;throw e}return j})});
+  }
+  function uploadPending(eventId){
+    var list=attPending.slice();attPending=[];
+    return list.reduce(function(p,it){return p.then(function(){return uploadAtt(eventId,it.blob,it.name,it.type).then(apply)})},Promise.resolve());
+  }
+  function compressImage(file){
+    return new Promise(function(res,rej){
+      var url=URL.createObjectURL(file),im=new Image();
+      im.onload=function(){
+        var m=2200,sc=Math.min(1,m/Math.max(im.width,im.height)),cv=document.createElement('canvas');
+        cv.width=Math.round(im.width*sc);cv.height=Math.round(im.height*sc);
+        cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height);URL.revokeObjectURL(url);
+        cv.toBlob(function(b){b?res(b):rej(new Error('Das Bild ließ sich nicht umwandeln'))},'image/jpeg',.82);
+      };
+      im.onerror=function(){URL.revokeObjectURL(url);rej(new Error('Das Bild konnte nicht gelesen werden'))};
+      im.src=url;
+    });
+  }
+  function addFile(file){
+    var done=function(blob,name,type){
+      if(blob.size>9*1024*1024){attMsg('Die Datei ist zu groß (maximal 9 MB).');return}
+      if(editing&&editing.id){
+        attMsg('Wird hochgeladen …');
+        uploadAtt(editing.id,blob,name,type).then(function(j){apply(j);editing=events.find(function(x){return x.id===editing.id})||editing;renderAtt();attMsg('Anlage gespeichert.')})
+          .catch(function(e){attMsg('Hochladen fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
+      }else{attPending.push({blob:blob,name:name,type:type});renderAtt();attMsg('Die Anlage wird beim Speichern des Termins hochgeladen.')}
+    };
+    if(file.type==='application/pdf'||/\.pdf$/i.test(file.name)){done(file,file.name||'Dokument.pdf','application/pdf');return}
+    if(/^image\//.test(file.type)||/\.(jpe?g|png|webp|heic)$/i.test(file.name)){
+      compressImage(file).then(function(b){done(b,(file.name||'Foto').replace(/\.\w+$/,'')+'.jpg','image/jpeg')}).catch(function(e){attMsg(e.message)});return;
+    }
+    attMsg('Erlaubt sind PDF-Dateien und Fotos.');
+  }
+  function loadAtt(a){
+    return fetch(API+'/att/get?id='+encodeURIComponent(a.id),{method:'POST',headers:{'X-Pass':pass}})
+      .then(function(r){if(!r.ok)throw new Error(r.status===404?'Anlage nicht gefunden':'Fehler '+r.status);return r.blob()})
+      .then(function(b){return new Blob([b],{type:a.type})});
+  }
+  function openAtt(a,st){
+    var set=function(t,link){if(!st)return;st.textContent=t;if(link){st.appendChild(document.createTextNode(' '));st.appendChild(link)}};
+    set('Wird geladen …');
+    loadAtt(a).then(function(b){
+      var lk=el('a',null,'Zum Öffnen tippen');lk.href=URL.createObjectURL(b);lk.target='_blank';lk.rel='noopener';
+      set('Geladen.',lk);try{lk.click()}catch(e){}
+    }).catch(function(e){set('Fehler: '+(e&&e.message?e.message:'unbekannt'))});
+  }
+  function shareAtt(a,st){
+    loadAtt(a).then(function(b){
+      var f=new File([b],a.name,{type:a.type});
+      if(navigator.canShare&&navigator.canShare({files:[f]}))return navigator.share({files:[f],title:a.name});
+      var l=document.createElement('a');l.href=URL.createObjectURL(b);l.download=a.name;document.body.appendChild(l);l.click();setTimeout(function(){l.remove()},1500);
+    }).catch(function(e){if(e&&e.name==='AbortError')return;if(st)st.textContent='Teilen ist hier nicht möglich.'});
+  }
+  function removeAtt(a){
+    var go=function(admin){return call({op:'att_del',eventId:editing.id,attId:a.id,admin:admin}).then(function(j){apply(j);editing=events.find(function(x){return x.id===editing.id})||editing;renderAtt()})};
+    go(undefined).catch(function(e){if(e&&e.status===403)askAdmin('Anlage entfernen',function(pw){return go(pw)});else attMsg('Entfernen hat nicht geklappt.')});
+  }
+  function renderAtt(){
+    var ul=$('evAttList');if(!ul)return;ul.textContent='';
+    var mk=function(name,size,note){
+      var li=el('li','item');li.style.setProperty('--c','#7d8a82');
+      var b=el('div','body');b.appendChild(el('div','t',name));b.appendChild(el('div','m',fmtSize(size)+(note?' · '+note:'')));li.appendChild(b);return li;
+    };
+    ((editing&&editing.att)||[]).forEach(function(a){
+      var li=mk(a.name,a.size),st=el('div','m');
+      var v=el('button','btn ghost sm','Ansehen');v.type='button';v.onclick=function(){openAtt(a,st)};
+      var sh=el('button','btn ghost sm','Teilen');sh.type='button';sh.onclick=function(){shareAtt(a,st)};
+      var d=el('button','btn danger sm','Entfernen');d.type='button';d.onclick=function(){removeAtt(a)};
+      li.querySelector('.body').appendChild(st);[v,sh,d].forEach(function(x){li.appendChild(x)});ul.appendChild(li);
+    });
+    attPending.forEach(function(it,i){
+      var li=mk(it.name,it.blob.size,'wird beim Speichern hochgeladen');
+      var d=el('button','btn danger sm','Entfernen');d.type='button';d.onclick=function(){attPending.splice(i,1);renderAtt()};li.appendChild(d);ul.appendChild(li);
+    });
+  }
+  $('attScan').onclick=function(){$('attFile').click()};
+  $('attPhoto').onclick=function(){$('attCam').click()};
+  ['attFile','attCam'].forEach(function(id){$(id).addEventListener('change',function(){
+    var fs=Array.prototype.slice.call(this.files||[]);this.value='';fs.forEach(addFile);
+  })});
+
   function jumpTo(key,id){
     selected=key;var d=parse(key);view=new Date(d.getFullYear(),d.getMonth(),1);renderAll();
     var det=document.querySelector('details[data-fold="day"]');
@@ -849,6 +951,11 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(e.repeat)meta+=' · '+REPEAT_LABEL[e.repeat]+(e.until?' bis '+fmtBirthday(e.until):'');
     b.appendChild(el('div','m',meta));
     if(e.place){var pl=el('a','minfo','Ort: '+e.place);pl.href='https://maps.apple.com/?q='+encodeURIComponent(e.place);pl.target='_blank';pl.rel='noopener';b.appendChild(pl)}
+    (e.att||[]).forEach(function(a){
+      var al=el('a','minfo','Anlage: '+a.name+' ('+fmtSize(a.size)+')'),st=el('span','minfo');al.href='#';
+      al.onclick=function(ev){ev.preventDefault();ev.stopPropagation();openAtt(a,st)};
+      b.appendChild(al);b.appendChild(st);
+    });
     if(e.note)b.appendChild(el('div','note',e.note));
     if(!e.virtual)b.appendChild(sendBox(e,showDate?e.start:selected));
     li.appendChild(b);
@@ -976,9 +1083,10 @@ body:has(.modal:not([hidden])) .totop{display:none}
       if(se.children.length){se.insertBefore(el('span','sub','Wiederholung:'),se.firstChild);se.hidden=false}
     }
     $('evDel').hidden=!e;$('evDel').textContent='Löschen';$('evErr').textContent='';
+    attPending=[];attMsg('');renderAtt();
     $('evModal').hidden=false;$('fTitle').focus();
   }
-  function closeEvent(){$('evModal').hidden=true;editing=null}
+  function closeEvent(){$('evModal').hidden=true;editing=null;attPending=[]}
   $('btnAdd').onclick=function(){openEvent(null)};
   $('evCancel').onclick=closeEvent;
   $('evModal').addEventListener('mousedown',function(e){if(e.target===this)closeEvent()});
@@ -996,7 +1104,12 @@ body:has(.modal:not([hidden])) .totop{display:none}
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
     if(data.who)store('fk-me',data.who);
-    write({op:'put',kind:'event',item:data},$('evErr')).then(function(){selected=start;view=new Date(parse(start).getFullYear(),parse(start).getMonth(),1);closeEvent();renderAll()}).catch(function(){});
+    write({op:'put',kind:'event',item:data},$('evErr')).then(function(){
+      selected=start;view=new Date(parse(start).getFullYear(),parse(start).getMonth(),1);
+      return uploadPending(data.id).then(function(){closeEvent();renderAll()},function(err){
+        $('evErr').textContent='Der Termin ist gespeichert, aber eine Anlage ließ sich nicht hochladen: '+(err&&err.message?err.message:'Fehler')+'. Öffne den Termin und füge sie erneut hinzu.';renderAll();
+      });
+    }).catch(function(){});
   });
   $('evDel').onclick=function(){
     var id=editing.id;

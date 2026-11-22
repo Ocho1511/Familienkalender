@@ -45,7 +45,7 @@ function cors(request, env) {
   return {
     'Access-Control-Allow-Origin': ok ? o : origins(env)[0],
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Pass',
     'Vary': 'Origin',
   };
 }
@@ -413,6 +413,11 @@ function buildIcs(state) {
   return L.map(icsFold).join('\r\n') + '\r\n';
 }
 
+const ATT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+const MAX_ATT = 9 * 1024 * 1024;
+const MAX_ATT_PER_EVENT = 5;
+const randomId = () => { const a = new Uint8Array(10); crypto.getRandomValues(a); return Array.from(a, (x) => (x % 36).toString(36)).join(''); };
+
 export default {
   async fetch(request, env) {
     const c = cors(request, env);
@@ -436,6 +441,39 @@ export default {
       }
       const st = (await env.KV.get('state', 'json')) || { members: [], events: [] };
       return new Response(buildIcs(st), { headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=300' } });
+    }
+    if (request.method === 'POST' && (url.pathname === '/att/put' || url.pathname === '/att/get')) {
+      if (!env.KV || !env.FAMILY_PASSWORD) return reply({ error: 'Worker nicht eingerichtet' }, 500, c);
+      const ipA = request.headers.get('CF-Connecting-IP') || 'anon';
+      if ((await failCount(env, ipA)) >= 10) return reply({ error: 'Zu viele Versuche. Bitte spaeter erneut.' }, 429, c);
+      if (!(await sameText(str(request.headers.get('X-Pass'), 200).trim(), String(env.FAMILY_PASSWORD).trim()))) {
+        await addFail(env, ipA);
+        return reply({ error: 'Falsches Passwort' }, 401, c);
+      }
+      const stA = (await env.KV.get('state', 'json')) || { members: [], events: [] };
+      stA.events = stA.events || [];
+      if (url.pathname === '/att/get') {
+        const id = url.searchParams.get('id') || '';
+        if (!ID_RE.test(id) || !stA.events.some((e) => (e.att || []).some((a) => a.id === id))) return reply({ error: 'Anlage nicht gefunden' }, 404, c);
+        const o = await env.KV.getWithMetadata('att:' + id, 'arrayBuffer');
+        if (!o || !o.value) return reply({ error: 'Anlage nicht gefunden' }, 404, c);
+        return new Response(o.value, { headers: { 'Content-Type': (o.metadata && o.metadata.t) || 'application/octet-stream', 'Cache-Control': 'private, no-store', ...c } });
+      }
+      const ev = stA.events.find((e) => e.id === (url.searchParams.get('e') || ''));
+      if (!ev) return reply({ error: 'Termin nicht gefunden' }, 404, c);
+      const type = String(url.searchParams.get('t') || '').toLowerCase();
+      if (!ATT_TYPES.includes(type)) return reply({ error: 'Nur PDF, JPEG, PNG oder WebP' }, 400, c);
+      if (Number(request.headers.get('content-length') || 0) > MAX_ATT) return reply({ error: 'Datei zu gross (max. 9 MB)' }, 413, c);
+      if ((ev.att || []).length >= MAX_ATT_PER_EVENT) return reply({ error: 'Maximal ' + MAX_ATT_PER_EVENT + ' Anlagen je Termin' }, 413, c);
+      const buf = await request.arrayBuffer();
+      if (!buf.byteLength) return reply({ error: 'Leere Datei' }, 400, c);
+      if (buf.byteLength > MAX_ATT) return reply({ error: 'Datei zu gross (max. 9 MB)' }, 413, c);
+      const name = str(url.searchParams.get('n'), 80).replace(/[\\/:*?"<>|\r\n\t]+/g, ' ').trim() || 'Anlage';
+      const id = randomId();
+      await env.KV.put('att:' + id, buf, { metadata: { t: type, n: name } });
+      ev.att = (ev.att || []).concat([{ id, name, type, size: buf.byteLength, added: Date.now() }]);
+      await env.KV.put('state', JSON.stringify(stA));
+      return reply(snap(stA), 200, c);
     }
     if (request.method !== 'POST') return reply({ error: 'POST erwartet' }, 405, c);
     if (!env.KV || !env.FAMILY_PASSWORD) return reply({ error: 'Worker nicht eingerichtet' }, 500, c);
@@ -542,12 +580,27 @@ export default {
       const m = state.members.find((x) => x.id === body.id);
       return !!m && Date.now() - (Number(m.createdAt) || 0) < 15 * 60000;
     })();
-    if ((body.op === 'photo_del' || body.op === 'del') && !recentMember) {
+    const recentAtt = body.op === 'att_del' && (() => {
+      const e = state.events.find((x) => x.id === body.eventId);
+      const a = e && (e.att || []).find((x) => x.id === body.attId);
+      return !!a && Date.now() - (Number(a.added) || 0) < 15 * 60000;
+    })();
+    if ((body.op === 'photo_del' || body.op === 'del' || body.op === 'att_del') && !recentMember && !recentAtt) {
       if (!env.ADMIN_PASSWORD) return reply({ error: 'Loeschkennwort nicht eingerichtet' }, 500, c);
       if (!(await sameText(str(body.admin, 200).trim(), String(env.ADMIN_PASSWORD).trim()))) {
         await addFail(env, ip);
         return reply({ error: 'Falsches Loeschkennwort' }, 403, c);
       }
+    }
+    if (body.op === 'att_del') {
+      const e = state.events.find((x) => x.id === body.eventId);
+      if (e && e.att) {
+        e.att = e.att.filter((a) => a.id !== body.attId);
+        if (!e.att.length) delete e.att;
+        await env.KV.delete('att:' + String(body.attId));
+        await env.KV.put('state', JSON.stringify(state));
+      }
+      return reply(snap(state), 200, c);
     }
     if (body.op === 'photo_del') {
       await env.KV.delete('photo');
@@ -564,6 +617,7 @@ export default {
         if (!item) return reply({ error: 'Ungueltige Daten' }, 400, c);
         const i = list.findIndex((x) => x.id === item.id);
         if (isMember) item.createdAt = i >= 0 ? list[i].createdAt : Date.now(); // Anlegezeit nur der Server bestimmt
+        if (!isMember && i >= 0 && list[i].att) item.att = list[i].att; // Anlagen verwaltet nur der Server
         if (i >= 0) list[i] = item;
         else {
           if (list.length >= (isMember ? MAX_MEMBERS : MAX_EVENTS)) return reply({ error: 'Limit erreicht' }, 413, c);
@@ -571,6 +625,7 @@ export default {
         }
       } else {
         const i = list.findIndex((x) => x.id === body.id);
+        if (i >= 0 && !isMember) for (const a of list[i].att || []) await env.KV.delete('att:' + a.id);
         if (i >= 0) list.splice(i, 1);
       }
       await env.KV.put('state', JSON.stringify(state));
