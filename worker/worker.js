@@ -119,6 +119,7 @@ function cleanEvent(e) {
     remindMail: real && e.remindMail === true ? true : undefined,
     remindCall: real && e.remindCall === true ? true : undefined,
     autoSend: e.autoSend === true ? true : e.autoSend === false ? false : undefined,
+    priv: e.priv === true ? true : undefined,
     extra: extra.length ? extra : undefined,
     repeat, until,
     skip: repeat && Array.isArray(e.skip) ? (() => { const a = [...new Set(e.skip.filter((x) => DATE_RE.test(x || '')))].sort().slice(0, 100); return a.length ? a : undefined; })() : undefined,
@@ -359,6 +360,147 @@ async function runReminders(env) {
   await env.KV.put('lastrun', String(now));
 }
 
+// ---- Outlook -> Familienkalender: als privat markierte Termine aus dem Outlook-ICS-Link einlesen ----
+const OL_HOST_RE = /(^|\.)(office365\.com|outlook\.com|live\.com|office\.com|microsoft\.com)$/i;
+const BERLIN_TZ = ['W. Europe Standard Time', 'Europe/Berlin', 'Romance Standard Time', 'Central Europe Standard Time', 'Central European Standard Time', 'Europe/Vienna', 'Europe/Zurich'];
+function icsUnfold(t) { return String(t).replace(/\r?\n[ \t]/g, '').split(/\r?\n/); }
+function icsUnesc(v) { return String(v || '').replace(/\\[nN]/g, ' ').replace(/\\([,;\\])/g, '$1').trim(); }
+function tzOffset(zone, ts) {
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const o = {};
+  fmt.formatToParts(new Date(ts)).forEach((p) => { o[p.type] = p.value; });
+  return Date.UTC(+o.year, +o.month - 1, +o.day, +o.hour, +o.minute, +o.second) - ts;
+}
+// "20271202T190000" (+ TZID) -> { date: 'YYYY-MM-DD', time: 'HH:MM' | '' } in deutscher Ortszeit
+function parseDt(val, params) {
+  const m = String(val).match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
+  if (!m) return null;
+  const date = m[1] + '-' + m[2] + '-' + m[3];
+  if (m[4] === undefined) return { date, time: '' };
+  const tz = m[7] ? 'UTC' : String((params && params.TZID) || '').replace(/^"|"$/g, '');
+  if (!tz || BERLIN_TZ.includes(tz)) return { date, time: m[4] + ':' + m[5] };
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  let utc = guess;
+  if (!/^(utc|etc\/utc)$/i.test(tz)) { try { utc = guess - tzOffset(tz, guess); } catch (e) { return { date, time: m[4] + ':' + m[5] }; } }
+  const dt = new Date(utc);
+  return { date: dt.toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' }), time: dt.toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) };
+}
+function parseIcs(text) {
+  const evs = [];
+  let cur = null;
+  for (const line of icsUnfold(text)) {
+    if (line === 'BEGIN:VEVENT') { cur = {}; continue; }
+    if (line === 'END:VEVENT') { if (cur) evs.push(cur); cur = null; continue; }
+    if (!cur) continue;
+    const i = line.indexOf(':');
+    if (i < 0) continue;
+    const head = line.slice(0, i).split(';');
+    const name = head[0].toUpperCase();
+    const params = {};
+    head.slice(1).forEach((x) => { const k = x.indexOf('='); if (k > 0) params[x.slice(0, k).toUpperCase()] = x.slice(k + 1); });
+    const val = line.slice(i + 1);
+    if (name === 'EXDATE') (cur.exdate = cur.exdate || []).push(...val.split(',').map((v) => ({ v, params })));
+    else if (!(name in cur)) cur[name] = { val, params };
+  }
+  return evs;
+}
+const prevDay = (s) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
+function untilFromCount(start, rep, n) {
+  const d = new Date(start + 'T00:00:00Z');
+  const k = Math.max(0, n - 1);
+  if (rep === 'd') d.setUTCDate(d.getUTCDate() + k);
+  else if (rep === 'w') d.setUTCDate(d.getUTCDate() + 7 * k);
+  else if (rep === '2w') d.setUTCDate(d.getUTCDate() + 14 * k);
+  else if (rep === 'm') d.setUTCMonth(d.getUTCMonth() + k);
+  else d.setUTCFullYear(d.getUTCFullYear() + k);
+  return d.toISOString().slice(0, 10);
+}
+function icsToEvents(text, today) {
+  const all = parseIcs(text);
+  const out = [];
+  let priv = 0, simplified = 0;
+  for (const c of all) {
+    if (c['RECURRENCE-ID']) continue;
+    if (c.STATUS && /CANCELLED/i.test(c.STATUS.val)) continue;
+    const cls = ((c.CLASS && c.CLASS.val) || '').toUpperCase();
+    if (cls !== 'PRIVATE' && cls !== 'CONFIDENTIAL') continue;
+    priv++;
+    const uid = c.UID && c.UID.val;
+    if (!uid || !c.DTSTART) continue;
+    const st = parseDt(c.DTSTART.val, c.DTSTART.params);
+    if (!st) continue;
+    const en = c.DTEND ? parseDt(c.DTEND.val, c.DTEND.params) : null;
+    let end = '';
+    if (en) { if (!st.time) { const ex = prevDay(en.date); end = ex > st.date ? ex : ''; } else end = en.date > st.date ? en.date : ''; }
+    const ev = { uid, title: icsUnesc(c.SUMMARY && c.SUMMARY.val) || 'Privater Termin', start: st.date, end, time: st.time, place: icsUnesc(c.LOCATION && c.LOCATION.val) };
+    if (c.RRULE) {
+      const r = {};
+      c.RRULE.val.split(';').forEach((x) => { const k = x.indexOf('='); if (k > 0) r[x.slice(0, k)] = x.slice(k + 1); });
+      const iv = Number(r.INTERVAL || 1);
+      const multi = (r.BYDAY || '').includes(',') || r.BYSETPOS || r.BYMONTHDAY && r.FREQ !== 'MONTHLY';
+      const rep = multi ? null : r.FREQ === 'DAILY' && iv === 1 ? 'd' : r.FREQ === 'WEEKLY' && iv === 1 ? 'w' : r.FREQ === 'WEEKLY' && iv === 2 ? '2w' : r.FREQ === 'MONTHLY' && iv === 1 && !r.BYDAY ? 'm' : r.FREQ === 'YEARLY' && iv === 1 ? 'y' : null;
+      if (rep) {
+        ev.repeat = rep; ev.end = '';
+        if (r.UNTIL) { const u = parseDt(r.UNTIL, {}); if (u) ev.until = u.date; }
+        else if (r.COUNT) ev.until = untilFromCount(st.date, rep, Number(r.COUNT));
+        ev.skip = (c.exdate || []).map((x) => parseDt(x.v, x.params)).filter(Boolean).map((x) => x.date);
+      } else simplified++;
+    }
+    const last = ev.repeat ? (ev.until || '9999-12-31') : (ev.end || ev.start);
+    if (last < today) continue;
+    out.push(ev);
+  }
+  return { total: all.length, priv, simplified, events: out };
+}
+async function syncOutlook(env) {
+  const cfg = (await env.KV.get('outlook', 'json')) || {};
+  const done = async (r) => { cfg.last = Date.now(); cfg.status = r; await env.KV.put('outlook', JSON.stringify(cfg)); return r; };
+  if (!cfg.url) return { ok: false, error: 'Kein Outlook-Link hinterlegt' };
+  let u;
+  try { u = new URL(String(cfg.url).replace(/^webcal:/i, 'https:')); } catch (e) { return done({ ok: false, error: 'Der Link ist ungueltig' }); }
+  if (u.protocol !== 'https:' || !OL_HOST_RE.test(u.hostname)) return done({ ok: false, error: 'Nur Outlook-Links sind erlaubt (outlook.office365.com, outlook.live.com)' });
+  let text = '';
+  try {
+    const r = await fetch(u.toString(), { headers: { 'User-Agent': 'Familienkalender' }, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) return done({ ok: false, error: 'Der Outlook-Link antwortet mit Status ' + r.status });
+    text = await r.text();
+  } catch (e) { return done({ ok: false, error: 'Der Outlook-Link ist nicht erreichbar' }); }
+  if (!text.includes('BEGIN:VCALENDAR')) return done({ ok: false, error: 'Der Link liefert keinen Kalender' });
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+  const res = icsToEvents(text, today);
+  const state = (await env.KV.get('state', 'json')) || { members: [], events: [] };
+  state.events = state.events || [];
+  const who = cfg.who && (state.members || []).some((m) => m.id === cfg.who) ? cfg.who : '';
+  const keep = new Set();
+  let added = 0, updated = 0, removed = 0;
+  for (const ev of res.events) {
+    const id = 'ol' + (await sha256hex(ev.uid)).slice(0, 20);
+    keep.add(id);
+    const i = state.events.findIndex((x) => x.id === id);
+    const old = i >= 0 ? state.events[i] : null;
+    const item = cleanEvent({ ...(old || {}), id, title: ev.title, who, cat: old ? old.cat : 'Termin', start: ev.start, end: ev.end, time: ev.time, place: ev.place || undefined, repeat: ev.repeat, until: ev.until, skip: ev.skip, priv: true, createdAt: old ? old.createdAt : Date.now() });
+    if (!item) continue;
+    item.src = 'outlook';
+    if (old && old.att) item.att = old.att;
+    if (i >= 0) { if (JSON.stringify(old) !== JSON.stringify(item)) updated++; state.events[i] = item; }
+    else if (state.events.length < MAX_EVENTS) { state.events.push(item); added++; }
+  }
+  const before = state.events.length;
+  state.events = state.events.filter((x) => {
+    if (x.src !== 'outlook' || keep.has(x.id)) return true;
+    const last = x.repeat ? (x.until || '9999-12-31') : (x.end || x.start);
+    return last < today; // vergangene Termine bleiben als Verlauf
+  });
+  removed = before - state.events.length;
+  if (added || updated || removed) await env.KV.put('state', JSON.stringify(state));
+  return done({ ok: true, total: res.total, priv: res.priv, simplified: res.simplified, added, updated, removed });
+}
+async function syncOutlookIfDue(env) {
+  const cfg = (await env.KV.get('outlook', 'json')) || {};
+  if (!cfg.url || (cfg.last && Date.now() - cfg.last < 30 * 60000)) return;
+  await syncOutlook(env);
+}
+
 // ---- Outlook-Abo (iCalendar-Feed, nur lesend) ----
 function icsEsc(t) {
   return String(t || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
@@ -381,13 +523,14 @@ function nextDay(s) {
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 }
-function buildIcs(state) {
+function buildIcs(state, onlyPriv) {
   const names = {};
   (state.members || []).forEach((m) => { names[m.id] = m.name; });
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Familienkalender//DE', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-    'X-WR-CALNAME:Familienkalender', 'X-PUBLISHED-TTL:PT1H', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H'];
+    'X-WR-CALNAME:' + (onlyPriv ? 'Familienkalender (privat)' : 'Familienkalender'), 'X-PUBLISHED-TTL:PT1H', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H'];
   (state.events || []).forEach((e) => {
+    if (e.src === 'outlook' || (onlyPriv && !e.priv)) return;
     const who = e.who && names[e.who] ? names[e.who] : 'Alle';
     const end = e.end && e.end >= e.start ? e.end : e.start;
     L.push('BEGIN:VEVENT', 'UID:' + e.id + '@familienkalender', 'DTSTAMP:' + stamp);
@@ -411,7 +554,7 @@ function buildIcs(state) {
     L.push('END:VEVENT');
   });
   (state.members || []).forEach((m) => {
-    if (!m.birthday) return;
+    if (!m.birthday || onlyPriv) return;
     L.push('BEGIN:VEVENT', 'UID:bd-' + m.id + '@familienkalender', 'DTSTAMP:' + stamp,
       'DTSTART;VALUE=DATE:' + d8(m.birthday), 'DTEND;VALUE=DATE:' + d8(nextDay(m.birthday)), 'RRULE:FREQ=YEARLY',
       'SUMMARY:' + icsEsc('Geburtstag: ' + m.name), 'CATEGORIES:Geburtstag', 'END:VEVENT');
@@ -602,7 +745,7 @@ export default {
         return new Response('nicht gefunden', { status: 404 });
       }
       const st = (await env.KV.get('state', 'json')) || { members: [], events: [] };
-      return new Response(buildIcs(st), { headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=300' } });
+      return new Response(buildIcs(st, url.searchParams.get('p') === '1'), { headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=300' } });
     }
     if (request.method === 'POST' && (url.pathname === '/att/put' || url.pathname === '/att/get')) {
       if (!env.KV || !env.FAMILY_PASSWORD) return reply({ error: 'Worker nicht eingerichtet' }, 500, c);
@@ -759,7 +902,31 @@ export default {
     }
     if (body.op === 'ics') {
       if (!env.ICS_TOKEN) return reply({ error: 'Outlook-Link nicht eingerichtet' }, 500, c);
-      return reply({ url: url.origin + '/ics?t=' + String(env.ICS_TOKEN).trim() }, 200, c);
+      return reply({ url: url.origin + '/ics?t=' + String(env.ICS_TOKEN).trim(), urlPriv: url.origin + '/ics?p=1&t=' + String(env.ICS_TOKEN).trim() }, 200, c);
+    }
+    if (body.op === 'outlook_get') {
+      const cfg = (await env.KV.get('outlook', 'json')) || {};
+      let host = '';
+      try { host = new URL(String(cfg.url || '').replace(/^webcal:/i, 'https:')).hostname; } catch (e) { /* kein Link */ }
+      return reply({ hasUrl: !!cfg.url, host, who: cfg.who || '', last: cfg.last || 0, status: cfg.status || null }, 200, c);
+    }
+    if (body.op === 'outlook_put') {
+      const raw = str(body.url, 1500).trim();
+      const cfg = (await env.KV.get('outlook', 'json')) || {};
+      if (raw === '' && body.clear === true) delete cfg.url;
+      else if (raw) {
+        let u;
+        try { u = new URL(raw.replace(/^webcal:/i, 'https:')); } catch (e) { return reply({ ok: false, error: 'Der Link ist ungueltig' }, 200, c); }
+        if (u.protocol !== 'https:' || !OL_HOST_RE.test(u.hostname)) return reply({ ok: false, error: 'Nur Outlook-Links sind erlaubt (outlook.office365.com, outlook.live.com)' }, 200, c);
+        cfg.url = raw; cfg.last = 0; cfg.status = null;
+      }
+      cfg.who = ID_RE.test(body.who || '') && state.members.some((m) => m.id === body.who) ? body.who : '';
+      await env.KV.put('outlook', JSON.stringify(cfg));
+      return reply({ ok: true }, 200, c);
+    }
+    if (body.op === 'outlook_sync') {
+      const r = await syncOutlook(env);
+      return reply({ ...r, state: snap((await env.KV.get('state', 'json')) || { members: [], events: [] }) }, 200, c);
     }
     if (body.op === 'cats_put') {
       const cl = cleanCats(body.cats);
@@ -826,6 +993,7 @@ export default {
         const i = list.findIndex((x) => x.id === item.id);
         if (isMember) item.createdAt = i >= 0 ? list[i].createdAt : Date.now(); // Anlegezeit nur der Server bestimmt
         if (!isMember && i >= 0 && list[i].att) item.att = list[i].att; // Anlagen verwaltet nur der Server
+        if (!isMember && i >= 0 && list[i].src) item.src = list[i].src; // Herkunft Outlook nur durch den Abgleich
         if (i >= 0) list[i] = item;
         else {
           if (list.length >= (isMember ? MAX_MEMBERS : MAX_EVENTS)) return reply({ error: 'Limit erreicht' }, 413, c);
@@ -843,6 +1011,7 @@ export default {
   },
   async scheduled(event, env, ctx) {
     if (env.KV && env.VAPID_PRIVATE && env.VAPID_PUBLIC) ctx.waitUntil(runReminders(env));
+    if (env.KV) ctx.waitUntil(syncOutlookIfDue(env));
   },
 };
 

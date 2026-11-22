@@ -352,6 +352,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <label class="chk" for="fRemindSms"><input type="checkbox" id="fRemindSms"> SMS</label>
     <label class="chk" for="fRemindMail"><input type="checkbox" id="fRemindMail"> E-Mail</label>
     <label class="chk" for="fRemindCall"><input type="checkbox" id="fRemindCall"> Kurzer Anruf mit Sprachnachricht</label>
+    <label class="chk" for="fPriv"><input type="checkbox" id="fPriv"> Privat (erscheint im „nur Privat"-Abo für Outlook)</label>
     <label for="fAuto">Automatisch versenden <select id="fAuto"><option value="">Nach Einstellung im Setup</option><option value="1">Ja, bei diesem Termin automatisch senden</option><option value="0">Nein, bei diesem Termin nicht automatisch senden</option></select></label>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
     <div class="attbox" id="evAtt">
@@ -407,9 +408,18 @@ body:has(.modal:not([hidden])) .totop{display:none}
   <div class="sheet">
     <h2>Mit Outlook verbinden</h2>
     <p class="sub" style="margin:0">Dieser Link zeigt alle Familientermine in Outlook an (nur lesen). Wer den Link kennt, kann die Termine sehen. Gib ihn nur in der Familie weiter.</p>
-    <label for="oUrl">Abo-Link <input id="oUrl" readonly></label>
+    <label for="oUrl">Abo-Link (alle Termine) <input id="oUrl" readonly></label>
     <div class="actions"><button class="btn" id="oCopy" type="button">Link kopieren</button></div>
+    <label for="oUrlP">Abo-Link (nur als „Privat" markierte Termine) <input id="oUrlP" readonly></label>
+    <div class="actions"><button class="btn" id="oCopyP" type="button">Privat-Link kopieren</button></div>
     <p class="sub" style="margin:0"><strong>Outlook (Web, outlook.com):</strong> Kalender hinzufügen, dann Aus dem Internet abonnieren, Link einfügen.<br><strong>Outlook (Windows, neu):</strong> Kalender hinzufügen, dann Aus dem Internet abonnieren.<br><strong>Outlook (Windows, klassisch):</strong> Kalender öffnen, dann Aus dem Internet.<br>Outlook aktualisiert abonnierte Kalender alle paar Stunden. Neue Einträge erscheinen deshalb mit Verzögerung.</p>
+    <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
+    <h3 style="margin:0;font-size:1rem">Von Outlook übernehmen (nur als privat markierte Termine)</h3>
+    <p class="sub" style="margin:0">In Outlook (Web) unter Einstellungen, Kalender, Freigegebene Kalender den Kalender veröffentlichen und den ICS-Link kopieren. Hier einfügen. Übernommen werden nur Termine, die in Outlook als „Privat" markiert sind. Hinweis: Outlook blendet in veröffentlichten Kalendern manchmal Titel privater Termine aus. Dann erscheinen sie mit dem Text, den Outlook liefert. Firmenkonten erlauben das Veröffentlichen oft nicht.</p>
+    <label for="oIcs">Outlook-ICS-Link <input id="oIcs" placeholder="https://outlook.office365.com/owa/calendar/…/calendar.ics" autocomplete="off"></label>
+    <label for="oWho">Termine zuordnen zu <select id="oWho"></select></label>
+    <div class="actions"><button class="btn sm" id="oSave" type="button">Speichern</button><button class="btn ghost sm" id="oSync" type="button">Jetzt abgleichen</button><button class="btn ghost sm" id="oRemove" type="button">Link entfernen</button></div>
+    <div class="sub" id="oStatus" role="status"></div>
     <div class="err" id="oErr" role="alert"></div>
     <div class="actions"><button class="btn ghost" id="oClose" type="button">Schließen</button></div>
   </div>
@@ -1105,6 +1115,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     $('fExtra').value=e&&e.extra?e.extra.map(function(m){return Math.round(m/1440)}).join(', '):'';
     $('fRemindWa').checked=!!(e&&e.remindWa);$('fRemindSms').checked=!!(e&&e.remindSms);$('fRemindMail').checked=!!(e&&e.remindMail);$('fRemindCall').checked=!!(e&&e.remindCall);
     $('fAuto').value=e&&e.autoSend===true?'1':e&&e.autoSend===false?'0':'';
+    $('fPriv').checked=e?!!e.priv:true;
     $('fRepeat').value=e&&e.repeat?e.repeat:'';$('fUntil').value=e&&e.until?e.until:'';$('fPlace').value=e&&e.place?e.place:'';syncRepeat();
     var sb=$('evSendBox');sb.textContent='';if(e)sb.appendChild(sendBox(e,day||(e.repeat?selected:e.start)));
     var se=$('evSeries');se.textContent='';se.hidden=true;
@@ -1141,6 +1152,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       remindWa:rOn()&&$('fRemindWa').checked,
       remindSms:rOn()&&$('fRemindSms').checked,remindMail:rOn()&&$('fRemindMail').checked,remindCall:rOn()&&$('fRemindCall').checked,
       autoSend:$('fAuto').value===''?undefined:$('fAuto').value==='1',
+      priv:$('fPriv').checked,
       repeat:$('fRepeat').value||undefined,until:$('fRepeat').value?$('fUntil').value:'',place:$('fPlace').value.trim(),
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
@@ -1598,7 +1610,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     todo.reduce(function(p,f){
       return p.then(function(){
         var id=uid();
-        var item={id:id,title:f.title.trim(),who:f.who||'',cat:f.category||'Termin',start:f.date,end:f.end_date&&f.end_date>f.date?f.end_date:'',time:f.time||'',place:(f.place||'').trim(),note:(f.note||'').trim(),remind:null,createdAt:Date.now()};
+        var item={id:id,title:f.title.trim(),who:f.who||'',cat:f.category||'Termin',start:f.date,end:f.end_date&&f.end_date>f.date?f.end_date:'',time:f.time||'',place:(f.place||'').trim(),note:(f.note||'').trim(),remind:null,priv:true,createdAt:Date.now()};
         return call({op:'put',kind:'event',item:item}).then(apply).then(function(){return kBlob?uploadAtt(id,kBlob,kName,kType).then(apply).catch(function(){failed++}):null});
       });
     },Promise.resolve()).then(function(){
@@ -1614,15 +1626,47 @@ body:has(.modal:not([hidden])) .totop{display:none}
   $('kModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
 
   /* ---- Outlook ---- */
+  function fmtWhen(ms){return ms?new Date(ms).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'noch nie'}
+  function showOl(j){
+    var st=j.status,t;
+    if(!j.hasUrl)t='Noch kein Outlook-Link hinterlegt.';
+    else if(!st)t='Link gespeichert ('+j.host+'). Noch nicht abgeglichen.';
+    else if(!st.ok)t='Letzter Abgleich '+fmtWhen(j.last)+': '+st.error;
+    else t='Letzter Abgleich '+fmtWhen(j.last)+': '+st.priv+' private von '+st.total+' Terminen im Outlook-Link, neu '+st.added+', geändert '+st.updated+', entfernt '+st.removed+'.'+(st.priv===0?' Es gibt keine als privat markierten Termine im Link (oder Outlook liefert die Markierung nicht mit).':'')+(st.simplified?' '+st.simplified+' Serie(n) mit komplexer Wiederholung nur als einzelner Termin übernommen.':'');
+    $('oStatus').textContent=t;
+  }
   $('btnOutlook').onclick=function(){
-    $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oModal').hidden=false;
-    call({op:'ics'}).then(function(j){$('oUrl').value=j.url}).catch(function(){$('oUrl').value='';$('oErr').textContent='Der Link konnte nicht geladen werden.'});
+    $('oErr').textContent='';$('oUrl').value='Wird geladen …';$('oUrlP').value='';$('oIcs').value='';$('oStatus').textContent='';$('oModal').hidden=false;
+    var w=$('oWho');w.textContent='';var o=el('option',null,'Alle');o.value='';w.appendChild(o);
+    members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
+    call({op:'ics'}).then(function(j){$('oUrl').value=j.url;$('oUrlP').value=j.urlPriv||''}).catch(function(){$('oUrl').value='';$('oErr').textContent='Der Link konnte nicht geladen werden.'});
+    call({op:'outlook_get'}).then(function(j){w.value=j.who||'';$('oIcs').placeholder=j.hasUrl?'Link gespeichert ('+j.host+'). Zum Ändern neuen Link einfügen.':$('oIcs').placeholder;showOl(j)}).catch(function(){});
   };
-  $('oCopy').onclick=function(){
-    var f=$('oUrl');f.select();
-    var done=function(){$('oErr').textContent='Link kopiert.'};
+  function copyField(id,msg){
+    var f=$(id);f.select();
+    var done=function(){$('oErr').textContent=msg};
     if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(f.value).then(done,function(){try{document.execCommand('copy');done()}catch(e){}})}
     else{try{document.execCommand('copy');done()}catch(e){}}
+  }
+  $('oCopy').onclick=function(){copyField('oUrl','Link kopiert.')};
+  $('oCopyP').onclick=function(){copyField('oUrlP','Privat-Link kopiert.')};
+  $('oSave').onclick=function(){
+    $('oErr').textContent='';
+    call({op:'outlook_put',url:$('oIcs').value.trim(),who:$('oWho').value}).then(function(j){
+      if(!j.ok){$('oErr').textContent=j.error||'Nicht gespeichert.';return}
+      $('oIcs').value='';return call({op:'outlook_get'}).then(function(g){showOl(g);$('oErr').textContent='Gespeichert. Mit „Jetzt abgleichen" einlesen.'});
+    }).catch(function(){$('oErr').textContent='Speichern hat nicht geklappt.'});
+  };
+  $('oSync').onclick=function(){
+    $('oErr').textContent='';$('oStatus').textContent='Wird abgeglichen …';$('oSync').disabled=true;
+    call({op:'outlook_sync'}).then(function(j){
+      if(j.state)apply(j.state);
+      return call({op:'outlook_get'}).then(showOl);
+    }).catch(function(e){$('oStatus').textContent='';$('oErr').textContent='Abgleich fehlgeschlagen: '+(e&&e.message?e.message:'Fehler')}).then(function(){$('oSync').disabled=false});
+  };
+  $('oRemove').onclick=function(){
+    if(!window.confirm('Den Outlook-Link entfernen? Bereits übernommene Termine bleiben im Kalender.'))return;
+    call({op:'outlook_put',url:'',clear:true,who:$('oWho').value}).then(function(){return call({op:'outlook_get'})}).then(function(g){showOl(g);$('oErr').textContent='Link entfernt.'}).catch(function(){$('oErr').textContent='Das hat nicht geklappt.'});
   };
   $('oClose').onclick=function(){$('oModal').hidden=true};
   $('oModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
