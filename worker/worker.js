@@ -261,7 +261,7 @@ async function mailSend(env, toEmail, toName, subject, text) {
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'api-key': String(env.BREVO_KEY).trim(), 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ sender: { name: env.MAIL_NAME || 'Familienkalender', email: String(env.MAIL_FROM).trim() }, to: [{ email: toEmail, name: toName }], subject, textContent: text }),
+    body: JSON.stringify({ sender: { name: env.MAIL_NAME || "Familie Knecht's Familienkalender", email: String(env.MAIL_FROM).trim() }, to: [{ email: toEmail, name: toName }], subject, textContent: text }),
   });
   let detail = '';
   try { const j = await r.json(); detail = (j && j.message) || ''; } catch (e) { /* kein JSON */ }
