@@ -1355,7 +1355,9 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(!who){rmsg('Bitte zuerst wählen, zu wem dieses Handy gehört.');return}
     store('fk-me',who);
     Notification.requestPermission().then(function(perm){
-      if(perm!=='granted'){rmsg('Ohne Erlaubnis gibt es keine Erinnerungen. Bitte in den Einstellungen erlauben.');throw 0}
+      if(perm!=='granted'){rmsg(perm==='denied'
+        ?'Mitteilungen sind für den Kalender blockiert. Auf dem iPhone: Einstellungen, Mitteilungen, dort „Familienkalender" öffnen und „Mitteilungen erlauben" einschalten. Fehlt der Eintrag, den Kalender vom Home-Bildschirm löschen, in Safari neu zum Home-Bildschirm hinzufügen und beim ersten Fragen „Erlauben" tippen.'
+        :'Die Abfrage wurde geschlossen, ohne zu erlauben. Tippe noch einmal auf „Einschalten" und dann auf „Erlauben".');throw 0}
       return getReg();
     }).then(function(reg){
       return reg.pushManager.getSubscription().then(function(sub){return sub||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(VAPID_PUBLIC)})});
