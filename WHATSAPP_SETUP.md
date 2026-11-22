@@ -46,11 +46,16 @@ npx wrangler deploy
 ```
 
 ## 6. Pruefen
-Im Kalender oben **Erinnerungen** -> unten "WhatsApp-Test an ..." -> Person waehlen -> senden.
-Kommt die Nachricht an, ist alles bereit. Bei einem Fehler zeigt die App den Grund von Meta an.
+Im Kalender oben **Erinnerungen** -> **Versand-Kanaele einstellen** -> bei "Test an" eine Person waehlen ->
+bei **WhatsApp** auf "Test senden". Kommt die Nachricht an, ist alles bereit.
+Bei einem Fehler zeigt die App den Grund von Meta an. Der Punkt am Knopf wird gruen, sobald ein Kanal automatisch sendet.
 
 ## 7. Benutzen
-Beim Termin eine Erinnerung waehlen und **"Zusaetzlich per WhatsApp erinnern"** ankreuzen.
+- Beim Termin eine Erinnerung waehlen und **"WhatsApp"** unter "Zusaetzlich erinnern per" ankreuzen.
+- Im Dialog **Versand-Kanaele** muss bei WhatsApp **"Automatisch senden"** an sein. Ein einzelner Termin kann das
+  mit "Automatisch versenden" (Ja/Nein) ueberschreiben.
+- Von Hand: im gespeicherten Termin unter "Jetzt ueber den Server senden" auf **WhatsApp** tippen.
+
 Die Nachricht geht an die WhatsApp-Nummer der Person (sonst an die Handynummer), bei "Alle" an alle mit Nummer.
 
 ## Hinweise
