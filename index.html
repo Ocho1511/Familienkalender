@@ -664,7 +664,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
         b.type='button';
         var bgc=dayBg(evs);if(bgc)b.style.background=bgc;
         b.setAttribute('aria-label',LONG.format(new Date(yearView,m,d))+', '+evs.length+' Einträge');
-        b.onclick=function(){selected=key;view=new Date(yearView,m,1);renderAll()};
+        b.onclick=function(){jumpTo(key,null)};
         mg.appendChild(b);
       })(d)}
       box.appendChild(mg);g.appendChild(box);
@@ -690,7 +690,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       var row=el('div','wrow'+(key===today?' today':'')+(key===selected?' sel':''));
       var wd=el('button','wd',WDSHORT.format(d).replace('.',''));wd.type='button';
       wd.appendChild(el('b',null,String(d.getDate())));
-      wd.onclick=function(){selected=key;view=new Date(d.getFullYear(),d.getMonth(),1);renderAll()};
+      wd.onclick=function(){jumpTo(key,null)};
       row.appendChild(wd);
       var box=el('div','wev');
       if(!evs.length)box.appendChild(el('span','empty','–'));
@@ -742,7 +742,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       c.appendChild(dots);
       if(evs.length>3)c.appendChild(el('span','more','+'+(evs.length-3)+' weitere'));
       c.setAttribute('aria-label',LONG.format(d)+', '+evs.length+' Einträge');
-      c.onclick=(function(k,dd){return function(){selected=k;if(dd.getMonth()!==view.getMonth()){view=new Date(dd.getFullYear(),dd.getMonth(),1)}renderAll()}})(key,d);
+      c.onclick=(function(k){return function(){jumpTo(k,null)}})(key);
       g.appendChild(c);
     }
   }
@@ -774,8 +774,9 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
     if(det&&!det.open){det.open=true;store('fk-fold-day','1')}
     setTimeout(function(){
       var box=$('dayList'),li=id?box.querySelector('[data-eid="'+id+'"]'):null;
-      var target=li||det||box;
-      try{target.scrollIntoView({behavior:'smooth',block:'center'})}catch(e){target.scrollIntoView()}
+      var target=li||det||box,rc=target.getBoundingClientRect();
+      var visibleEnough=li?(rc.top>=0&&rc.bottom<=innerHeight):(rc.top>=0&&rc.top<innerHeight*0.45);
+      if(!visibleEnough){try{target.scrollIntoView({behavior:'smooth',block:li?'center':'start'})}catch(e){target.scrollIntoView()}}
       if(li){li.classList.add('flash');setTimeout(function(){li.classList.remove('flash')},1800)}
     },60);
   }
