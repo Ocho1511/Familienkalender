@@ -449,6 +449,27 @@ function aiSystem(today, weekday, catNames, memberNames) {
     + 'person: genau einer der Namen [' + memberNames.join(', ') + '], wenn die Seite erkennen lässt, für wen der Termin gilt (zum Beispiel der Name des Kindes), sonst null. '
     + 'note: wichtige Zusatzangaben kurz (mitbringen, Kosten, Anmeldefrist, Ansprechpartner), sonst null. summary: ein Satz auf Deutsch, worum es auf der Seite geht.';
 }
+// JSON aus Modelltext holen: auch mit Code-Zaun, Text drumherum oder abgeschnitten (dann die vollstaendigen Termine retten)
+function lenientJson(t) {
+  t = String(t || '').replace(/```(?:json)?/gi, '');
+  const a = t.indexOf('{');
+  if (a < 0) return null;
+  const b = t.lastIndexOf('}');
+  if (b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { /* weiter */ } }
+  const sm = t.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const evs = [];
+  const k = t.indexOf('[', t.indexOf('"events"'));
+  if (k < 0) return null;
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = k + 1; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') { if (depth++ === 0) start = i; }
+    else if (ch === '}' && --depth === 0 && start >= 0) { try { evs.push(JSON.parse(t.slice(start, i + 1))); } catch (e) { /* ueberspringen */ } start = -1; }
+  }
+  return evs.length || sm ? { summary: sm ? sm[1] : '', events: evs } : null;
+}
 function cleanAiEvents(list, catNames, memberNames) {
   const out = [];
   for (const e of Array.isArray(list) ? list : []) {
@@ -502,9 +523,8 @@ async function aiExtract(env, state, body) {
       if (!r.ok || !j) return { ok: false, error: r.status === 429 ? 'Gerade zu viele Anfragen. Bitte in einer Minute noch einmal.' : 'Fehler bei der KI (Status ' + r.status + ').' };
       if (j.stop_reason === 'refusal') return { ok: false, error: 'Die KI hat diese Seite nicht ausgewertet.' };
       const t = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-      const m = t.match(/\{[\s\S]*\}/);
-      let parsed;
-      try { parsed = JSON.parse(m ? m[0] : t); } catch (e) { return { ok: false, error: 'Die Antwort der KI war nicht lesbar. Bitte noch einmal versuchen.' }; }
+      const parsed = lenientJson(t);
+      if (!parsed) return { ok: false, error: 'Die Antwort der KI war nicht lesbar (' + (j.stop_reason || 'unbekannt') + ', ' + t.length + ' Zeichen). Bitte noch einmal versuchen oder eine einzelne Seite scannen.' };
       return { ok: true, summary: str(parsed.summary, 300), events: cleanAiEvents(parsed.events, catNames, memberNames) };
     } catch (e) { return { ok: false, error: 'Die KI ist gerade nicht erreichbar.' }; }
   }
