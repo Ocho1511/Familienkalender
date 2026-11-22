@@ -418,6 +418,8 @@ function buildIcs(state) {
 // ---- KI: eine gescannte Seite lesen und Termine vorschlagen (Claude API, offizielles SDK) ----
 const AI_MODEL = 'claude-opus-5-5';
 const AI_PER_DAY = 40;
+// Ohne eigenen Schluessel nutzt der Kalender den vorhandenen KI-Proxy der Wein-/Gin-/Whiskey-App (der Schluessel bleibt dort).
+const AI_PROXY = 'https://weinkeller-scan-proxy.scan-proxy.workers.dev';
 const AI_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 const nullable = (t) => ({ anyOf: [{ type: t }, { type: 'null' }] });
 const AI_SCHEMA = {
@@ -481,7 +483,6 @@ async function aiExtract(env, state, body) {
   const now = new Date();
   const today = now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
   const weekday = now.toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'long' });
-  const client = new Anthropic({ apiKey: String(env.ANTHROPIC_API_KEY).trim(), maxRetries: 1, timeout: 90000 });
   const block = type === 'application/pdf'
     ? { type: 'document', source: { type: 'base64', media_type: type, data } }
     : { type: 'image', source: { type: 'base64', media_type: type, data } };
@@ -492,6 +493,22 @@ async function aiExtract(env, state, body) {
     messages: [{ role: 'user', content: [block, { type: 'text', text: 'Lies die Seite und gib alle Termine als JSON zurück.' }] }],
     output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
   };
+  if (!env.ANTHROPIC_API_KEY) {
+    // Weg ueber den gemeinsamen Proxy: kein Structured Output, daher JSON im Prompt verlangen
+    try {
+      const pp = { model: AI_MODEL, max_tokens: 4096, system: params.system + ' Antworte ausschliesslich mit einem JSON-Objekt der Form {"summary": string, "events": [{"title","date","end_date","time","place","category","person","note"}]} ohne Text davor oder danach. Nicht vorhandene Angaben sind null.', messages: params.messages };
+      const r = await fetch(AI_PROXY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pp), signal: AbortSignal.timeout(90000) });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j) return { ok: false, error: r.status === 429 ? 'Gerade zu viele Anfragen. Bitte in einer Minute noch einmal.' : 'Fehler bei der KI (Status ' + r.status + ').' };
+      if (j.stop_reason === 'refusal') return { ok: false, error: 'Die KI hat diese Seite nicht ausgewertet.' };
+      const t = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+      const m = t.match(/\{[\s\S]*\}/);
+      let parsed;
+      try { parsed = JSON.parse(m ? m[0] : t); } catch (e) { return { ok: false, error: 'Die Antwort der KI war nicht lesbar. Bitte noch einmal versuchen.' }; }
+      return { ok: true, summary: str(parsed.summary, 300), events: cleanAiEvents(parsed.events, catNames, memberNames) };
+    } catch (e) { return { ok: false, error: 'Die KI ist gerade nicht erreichbar.' }; }
+  }
+  const client = new Anthropic({ apiKey: String(env.ANTHROPIC_API_KEY).trim(), maxRetries: 1, timeout: 90000 });
   try {
     let msg;
     try {
@@ -595,9 +612,8 @@ export default {
     state.members = state.members || [];
     state.events = state.events || [];
 
-    if (body.op === 'ai_status') return reply({ configured: !!env.ANTHROPIC_API_KEY, model: AI_MODEL, perDay: AI_PER_DAY }, 200, c);
+    if (body.op === 'ai_status') return reply({ configured: true, model: AI_MODEL, perDay: AI_PER_DAY }, 200, c);
     if (body.op === 'ai_extract') {
-      if (!env.ANTHROPIC_API_KEY) return reply({ ok: false, error: 'Die KI ist im Worker noch nicht eingerichtet (ANTHROPIC_API_KEY fehlt)' }, 200, c);
       return reply(await aiExtract(env, state, body), 200, c);
     }
     if (body.op === 'notify_status') {
