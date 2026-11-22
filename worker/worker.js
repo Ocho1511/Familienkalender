@@ -253,7 +253,8 @@ async function smsSend(env, to, text) {
   }
   let detail = '';
   try { const j = await r.json(); detail = (j && j.message) || ''; } catch (e) { /* kein JSON */ }
-  if (r.status === 402 || /credit/i.test(detail)) detail = 'Kein SMS-Guthaben bei Brevo. Bitte dort Guthaben aufladen. (' + detail + ')';
+  if (/addon/i.test(detail)) detail = 'Bei Brevo ist noch kein SMS-Paket gebucht. Bitte dort SMS-Guthaben kaufen (Transaktionale, SMS). (' + detail + ')';
+  else if (r.status === 402 || /credit/i.test(detail)) detail = 'Kein SMS-Guthaben bei Brevo. Bitte dort Guthaben aufladen. (' + detail + ')';
   return { ok: r.ok, status: r.status, detail };
 }
 async function mailSend(env, toEmail, toName, subject, text) {
