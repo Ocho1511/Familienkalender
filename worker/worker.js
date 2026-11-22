@@ -118,6 +118,7 @@ function cleanEvent(e) {
     remindSms: real && e.remindSms === true ? true : undefined,
     remindMail: real && e.remindMail === true ? true : undefined,
     remindCall: real && e.remindCall === true ? true : undefined,
+    autoSend: e.autoSend === true ? true : e.autoSend === false ? false : undefined,
     extra: extra.length ? extra : undefined,
     repeat, until,
     skip: repeat && Array.isArray(e.skip) ? (() => { const a = [...new Set(e.skip.filter((x) => DATE_RE.test(x || '')))].sort().slice(0, 100); return a.length ? a : undefined; })() : undefined,
@@ -284,6 +285,7 @@ async function runReminders(env) {
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
   const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 62 * 86400000);
+  const autoOn = (await env.KV.get('autosend')) !== '0';
   const catRules = {};
   (state.cats || []).forEach((c) => { catRules[c.name] = c; });
   for (const e of state.events || []) {
@@ -302,8 +304,11 @@ async function runReminders(env) {
     leads = [...new Set(leads)];
     if (!fl || !leads.length) continue;
     const dates = e.repeat ? occDates(e, fromDay, toDay) : [e.start];
+    // Grundeinstellung (Setup) gilt, sofern der Termin sie nicht ueberschreibt; Push bleibt immer
+    const autoCh = e.autoSend === undefined ? autoOn : e.autoSend;
     for (const date of dates) for (const lead of leads) {
       const eff = { remind: lead, ...fl };
+      if (!autoCh) { eff.sms = false; eff.call = false; eff.mail = false; eff.wa = false; }
       const t = berlinToUtc(date, e.time || '09:00') - lead * 60000;
       if (!(t > last && t <= now)) continue;
       const dk = 'sent:' + e.id + ':' + t;
@@ -655,11 +660,40 @@ export default {
       return reply(await aiExtract(env, state, body), 200, c);
     }
     if (body.op === 'notify_status') {
-      return reply({ sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
+      return reply({ autoSend: (await env.KV.get('autosend')) !== '0', sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
     }
     if (body.op === 'settings_put') {
-      await env.KV.put('settings', JSON.stringify(cleanTexts(body.texts)));
-      return reply({ texts: await getTexts(env) }, 200, c);
+      if (typeof body.autoSend === 'boolean') await env.KV.put('autosend', body.autoSend ? '1' : '0');
+      if (body.texts) await env.KV.put('settings', JSON.stringify(cleanTexts(body.texts)));
+      return reply({ texts: await getTexts(env), autoSend: (await env.KV.get('autosend')) !== '0' }, 200, c);
+    }
+    if (body.op === 'send_now') {
+      const e = state.events.find((x) => x.id === body.id);
+      if (!e) return reply({ ok: false, error: 'Termin nicht gefunden' }, 200, c);
+      const date = DATE_RE.test(body.date || '') ? body.date : e.start;
+      const want = [...new Set((Array.isArray(body.channels) ? body.channels : []).filter((x) => ['wa', 'sms', 'mail', 'call'].includes(x)))];
+      if (!want.length) return reply({ ok: false, error: 'Kein Kanal gewaehlt' }, 200, c);
+      const who = e.who && state.members.find((m) => m.id === e.who) ? state.members.find((m) => m.id === e.who).name : 'Alle';
+      const rec = state.members.filter((m) => !e.who || m.id === e.who);
+      const v = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: 'jetzt' };
+      const texts = await getTexts(env);
+      const report = [];
+      for (const ch of want) {
+        const label = { wa: 'WhatsApp', sms: 'SMS', mail: 'E-Mail', call: 'Anruf' }[ch];
+        const conf = ch === 'wa' ? waConfigured(env) : ch === 'mail' ? mailConfigured(env) : smsConfigured(env);
+        if (!conf) { report.push(label + ': im Worker nicht eingerichtet'); continue; }
+        const to = rec.filter((m) => ch === 'mail' ? m.email : ch === 'wa' ? waNumber(m.whatsapp || m.phone) : waNumber(m.phone || m.whatsapp));
+        if (!to.length) { report.push(label + ': keine ' + (ch === 'mail' ? 'E-Mail-Adresse' : 'Nummer') + ' hinterlegt'); continue; }
+        let okN = 0, fail = '';
+        for (const m of to) {
+          const res = ch === 'wa'
+            ? await waSend(env, waNumber(m.whatsapp || m.phone), [e.title, deDate(date) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig'), who]).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }))
+            : await sendChannel(env, ch, m, v, texts).catch((err) => ({ ok: false, status: 0, detail: String(err && err.message) }));
+          if (res.ok) okN++; else fail = res.detail || ('Status ' + res.status);
+        }
+        report.push(label + ': ' + okN + ' von ' + to.length + ' gesendet' + (fail && okN < to.length ? ' (' + fail + ')' : ''));
+      }
+      return reply({ ok: true, report }, 200, c);
     }
     if (body.op === 'notify_test') {
       const ch = String(body.channel || '');

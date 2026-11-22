@@ -350,6 +350,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <label class="chk" for="fRemindSms"><input type="checkbox" id="fRemindSms"> SMS</label>
     <label class="chk" for="fRemindMail"><input type="checkbox" id="fRemindMail"> E-Mail</label>
     <label class="chk" for="fRemindCall"><input type="checkbox" id="fRemindCall"> Kurzer Anruf mit Sprachnachricht</label>
+    <label for="fAuto">Automatisch versenden <select id="fAuto"><option value="">Nach Einstellung im Setup</option><option value="1">Ja, bei diesem Termin automatisch senden</option><option value="0">Nein, bei diesem Termin nicht automatisch senden</option></select></label>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
     <div class="attbox" id="evAtt">
       <div class="sub">Anlagen, z. B. ein Schreiben von der Schule</div>
@@ -446,6 +447,8 @@ body:has(.modal:not([hidden])) .totop{display:none}
   <div class="sheet">
     <h2>SMS, E-Mail und Anruf</h2>
     <ul class="list" id="nStatus"></ul>
+    <label class="chk" for="nAuto"><input type="checkbox" id="nAuto" checked> Nachrichten automatisch versenden (WhatsApp, SMS, E-Mail, Anruf)</label>
+    <p class="sub" style="margin:0">Ist das aus, kommt bei Terminen nur die Push-Meldung. Jeder Termin kann das für sich überschreiben. Gesendet wird zu den Erinnerungszeitpunkten des Termins.</p>
     <label for="nWho">Test an <select id="nWho"></select></label>
     <div class="actions"><button class="btn ghost sm" id="nTestSms" type="button">SMS-Test</button><button class="btn ghost sm" id="nTestMail" type="button">E-Mail-Test</button><button class="btn ghost sm" id="nTestCall" type="button">Anruf-Test</button></div>
     <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
@@ -855,6 +858,19 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var wa=el('a','btn ghost sm','WhatsApp');wa.href='https://wa.me/'+(waNums.length===1?waNums[0]:'')+'?text='+t;wa.target='_blank';wa.rel='noopener';box.appendChild(wa);
     var sm=el('a','btn ghost sm','SMS');sm.href='sms:'+nums.map(function(n){return '+'+n}).join(',')+'?&body='+t;box.appendChild(sm);
     var ml=el('a','btn ghost sm','E-Mail');ml.href='mailto:'+mails.join(',')+'?subject='+encodeURIComponent('Termin: '+e.title)+'&body='+t;box.appendChild(ml);
+    var srv=el('div','send'),sm2=el('div','sub');
+    srv.appendChild(el('span','sub','Jetzt über den Server senden an '+(e.who&&memberOf(e.who)?memberOf(e.who).name:'alle')+':'));
+    [['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail'],['call','Anruf']].forEach(function(x){
+      var b=el('button','btn ghost sm',x[1]);b.type='button';
+      b.onclick=function(){
+        if(!window.confirm(x[1]+' zum Termin „'+e.title+'" jetzt senden?'))return;
+        b.disabled=true;sm2.textContent='Wird gesendet …';
+        call({op:'send_now',id:e.id,date:day,channels:[x[0]]}).then(function(j){sm2.textContent=j.ok?j.report.join(' · '):(j.error||'Nicht gesendet')})
+          .catch(function(err){sm2.textContent='Fehlgeschlagen: '+(err&&err.message?err.message:'Fehler')}).then(function(){b.disabled=false});
+      };
+      srv.appendChild(b);
+    });
+    box.appendChild(srv);box.appendChild(sm2);
     return box;
   }
 
@@ -1085,6 +1101,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';catHint();
     $('fExtra').value=e&&e.extra?e.extra.map(function(m){return Math.round(m/1440)}).join(', '):'';
     $('fRemindWa').checked=!!(e&&e.remindWa);$('fRemindSms').checked=!!(e&&e.remindSms);$('fRemindMail').checked=!!(e&&e.remindMail);$('fRemindCall').checked=!!(e&&e.remindCall);
+    $('fAuto').value=e&&e.autoSend===true?'1':e&&e.autoSend===false?'0':'';
     $('fRepeat').value=e&&e.repeat?e.repeat:'';$('fUntil').value=e&&e.until?e.until:'';$('fPlace').value=e&&e.place?e.place:'';syncRepeat();
     var sb=$('evSendBox');sb.textContent='';if(e)sb.appendChild(sendBox(e,day||(e.repeat?selected:e.start)));
     var se=$('evSeries');se.textContent='';se.hidden=true;
@@ -1120,6 +1137,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       extra:extraMinutes(),
       remindWa:rOn()&&$('fRemindWa').checked,
       remindSms:rOn()&&$('fRemindSms').checked,remindMail:rOn()&&$('fRemindMail').checked,remindCall:rOn()&&$('fRemindCall').checked,
+      autoSend:$('fAuto').value===''?undefined:$('fAuto').value==='1',
       repeat:$('fRepeat').value||undefined,until:$('fRepeat').value?$('fUntil').value:'',place:$('fPlace').value.trim(),
       createdAt:editing&&editing.createdAt?editing.createdAt:Date.now()};
     if(!data.title)return;
@@ -1398,7 +1416,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     w.value=load('fk-me')||'';nmsg('');$('nModal').hidden=false;$('nModal').scrollTop=0;
     var st=$('nStatus');st.textContent='';st.appendChild(el('li','empty','Status wird geprüft …'));
     call({op:'notify_status'}).then(function(j){
-      nDefaults=j.defaults;st.textContent='';
+      nDefaults=j.defaults;st.textContent='';$('nAuto').checked=j.autoSend!==false;
       [['SMS',j.sms],['Anruf mit Sprachnachricht',j.call],['E-Mail',j.mail]].forEach(function(x){
         var li=el('li','item');li.style.setProperty('--c',x[1]?'#2f6b57':'#b3372c');
         var b=el('div','body');b.appendChild(el('div','t',x[0]));
@@ -1417,6 +1435,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       nmsg(j.ok?(ch==='call'?'Anruf ausgelöst. Das Telefon klingelt gleich.':'Test gesendet.'):'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
     }).catch(function(e){nmsg('Fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
   }
+  $('nAuto').onchange=function(){var on=this.checked;call({op:'settings_put',autoSend:on}).then(function(){nmsg(on?'Automatisches Senden ist an.':'Automatisches Senden ist aus. Es kommen nur Push-Meldungen.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')})};
   $('nTestSms').onclick=function(){nTest('sms')};
   $('nTestMail').onclick=function(){nTest('mail')};
   $('nTestCall').onclick=function(){nTest('call')};
