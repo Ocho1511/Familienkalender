@@ -458,12 +458,10 @@ body:has(.modal:not([hidden])) .totop{display:none}
 
 <div class="modal" id="nModal" hidden style="z-index:25">
   <div class="sheet">
-    <h2>SMS, E-Mail und Anruf</h2>
-    <ul class="list" id="nStatus"></ul>
-    <label class="chk" for="nAuto"><input type="checkbox" id="nAuto" checked> Nachrichten automatisch versenden (WhatsApp, SMS, E-Mail, Anruf)</label>
-    <p class="sub" style="margin:0">Ist das aus, kommt bei Terminen nur die Push-Meldung. Jeder Termin kann das für sich überschreiben. Gesendet wird zu den Erinnerungszeitpunkten des Termins.</p>
+    <h2>Versand-Kanäle</h2>
+    <p class="sub" style="margin:0">Hier siehst du für WhatsApp, SMS, E-Mail und Anruf, ob der Kanal eingerichtet ist, und schaltest das automatische Senden je Kanal ein oder aus. Automatisch gesendet wird zu den Erinnerungszeitpunkten eines Termins, wenn der Kanal am Termin oder an der Art angekreuzt ist. Jeder Termin kann den Schalter für sich überschreiben. Push-Meldungen sind davon nicht betroffen.</p>
     <label for="nWho">Test an <select id="nWho"></select></label>
-    <div class="actions"><button class="btn ghost sm" id="nTestSms" type="button">SMS-Test</button><button class="btn ghost sm" id="nTestMail" type="button">E-Mail-Test</button><button class="btn ghost sm" id="nTestCall" type="button">Anruf-Test</button></div>
+    <ul class="list" id="nStatus"></ul>
     <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
     <label for="nSms">SMS-Text <textarea id="nSms" rows="3" maxlength="300"></textarea></label>
     <label for="nVoice">Sprachnachricht beim Anruf <textarea id="nVoice" rows="3" maxlength="400"></textarea></label>
@@ -485,11 +483,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <div class="actions"><button class="btn ghost sm" id="rTest" type="button">Test senden</button><button class="btn danger sm" id="rOff" type="button">Ausschalten</button></div>
     <label class="chk" for="rSound"><input type="checkbox" id="rSound" checked> Ton und Vibration bei Erinnerung</label>
     <div class="sub" style="margin-top:-4px">Der Ton hängt auch von den iPhone-Einstellungen ab: Einstellungen, Mitteilungen, Familienkalender, „Töne" einschalten. Der Seitenschalter für Klingelton aus und ein Fokus-Modus machen sie stumm.</div>
-    <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
-    <p class="sub" id="wInfo" style="margin:0"></p>
-    <label for="wWho">WhatsApp-Test an <select id="wWho"></select></label>
-    <div class="actions"><button class="btn ghost sm" id="wTest" type="button">WhatsApp-Test senden</button></div>
-    <div class="actions"><button class="btn ghost sm" id="btnChannels" type="button">SMS, E-Mail und Anruf einstellen</button></div>
+    <div class="actions"><button class="btn ghost sm" id="btnChannels" type="button">Versand-Kanäle einstellen (WhatsApp, SMS, E-Mail, Anruf)</button></div>
     <div class="actions"><button class="btn ghost sm" id="btnCats" type="button">Arten und Regeln einstellen</button></div>
     <div class="err" id="rMsg" role="alert"></div>
     <div class="actions"><button class="btn ghost" id="rClose" type="button">Schließen</button></div>
@@ -1373,10 +1367,11 @@ body:has(.modal:not([hidden])) .totop{display:none}
       else setDot('btnRemind','off','Push-Erinnerungen sind auf diesem Gerät aus');
     }).catch(function(){});
     call({op:'notify_status'}).then(function(j){
-      var any=j.sms||j.mail||j.call||j.wa;
-      if(!any)setDot('btnChannels','off','Kein Kanal eingerichtet');
-      else if(j.autoSend===false)setDot('btnChannels','off','Automatisches Senden ist aus');
-      else setDot('btnChannels','on','Automatisches Senden ist an');
+      var names={wa:'WhatsApp',sms:'SMS',mail:'E-Mail',call:'Anruf'},ac=j.autoCh||{},on=[],cfg=0;
+      Object.keys(names).forEach(function(k){if(j[k]){cfg++;if(ac[k]!==false)on.push(names[k])}});
+      if(!cfg)setDot('btnChannels','off','Kein Kanal eingerichtet');
+      else if(!on.length)setDot('btnChannels','off','Automatisches Senden ist überall aus');
+      else setDot('btnChannels','on','Automatisch an: '+on.join(', '));
     }).catch(function(){});
   }
   function rmsg(t){$('rMsg').textContent=t}
@@ -1396,7 +1391,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var w=$('rWho');w.textContent='';
     var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
     members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
-    w.value=load('fk-me')||'';rmsg('');$('rModal').hidden=false;refreshRemind();loadWa();
+    w.value=load('fk-me')||'';rmsg('');$('rModal').hidden=false;refreshRemind();
   };
   $('rClose').onclick=function(){$('rModal').hidden=true};
   $('rModal').addEventListener('mousedown',function(e){if(e.target===this)this.hidden=true});
@@ -1437,30 +1432,28 @@ body:has(.modal:not([hidden])) .totop{display:none}
     }).catch(function(e){rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
   };
 
-  /* ---- WhatsApp-Erinnerung (offizielle Meta-API, im Worker) ---- */
-  function loadWa(){
-    var w=$('wWho');w.textContent='';
-    var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
-    members.forEach(function(m){var x=el('option',null,m.name+(m.whatsapp||m.phone?'':' (keine Nummer)'));x.value=m.id;w.appendChild(x)});
-    $('wInfo').textContent='WhatsApp wird geprüft …';$('wTest').disabled=true;
-    call({op:'wa_status'}).then(function(j){
-      $('wInfo').textContent=j.configured?'WhatsApp ist eingerichtet. Am Termin „Zusätzlich per WhatsApp erinnern" ankreuzen, dann geht die Erinnerung an die WhatsApp-Nummer der Person.':'WhatsApp ist noch nicht eingerichtet. Im Worker fehlen die Zugangsdaten von Meta (siehe Anleitung WHATSAPP_SETUP.md im Repo).';
-      $('wTest').disabled=!j.configured;
-    }).catch(function(){$('wInfo').textContent='Der WhatsApp-Status ist gerade nicht abrufbar.'});
-  }
-  $('wTest').onclick=function(){
-    var id=$('wWho').value;
-    if(!id){rmsg('Bitte zuerst wählen, an wen der WhatsApp-Test gehen soll.');return}
-    rmsg('WhatsApp-Test wird gesendet …');
-    call({op:'wa_test',memberId:id}).then(function(j){
-      rmsg(j.ok?'WhatsApp-Test gesendet. Die Nachricht sollte gleich ankommen.':'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
-    }).catch(function(e){rmsg('Test fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
-  };
-
-  /* ---- SMS, E-Mail und Anruf: Status, Tests und Texte ---- */
-  var nDefaults=null;
+  /* ---- Versand-Kanäle: WhatsApp, SMS, E-Mail, Anruf (Status, automatisch senden je Kanal, Tests, Texte) ---- */
+  var nDefaults=null,nAuto={};
+  var CHANNELS=[['wa','WhatsApp','WHATSAPP_SETUP.md'],['sms','SMS','NOTIFY_SETUP.md'],['mail','E-Mail','NOTIFY_SETUP.md'],['call','Anruf mit Sprachnachricht','NOTIFY_SETUP.md']];
   function nmsg(t){$('nMsg').textContent=t}
   function fillTexts(t){$('nSms').value=t.smsText;$('nVoice').value=t.voiceText;$('nSubj').value=t.mailSubject;$('nMail').value=t.mailText}
+  function renderChannels(j){
+    var st=$('nStatus');st.textContent='';
+    CHANNELS.forEach(function(c){
+      var ok=!!j[c[0]];
+      var li=el('li','item');li.style.setProperty('--c',ok?'#2f6b57':'#b3372c');
+      var b=el('div','body');b.appendChild(el('div','t',c[1]));
+      b.appendChild(el('div','m',ok?'eingerichtet':'noch nicht eingerichtet (Anleitung: '+c[2]+' im Repo)'));
+      var lab=el('label','chk');var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!nAuto[c[0]];
+      cb.onchange=function(){
+        var o={};o[c[0]]=cb.checked;
+        call({op:'settings_put',autoCh:o}).then(function(r){nAuto=r.autoCh||nAuto;refreshDots();nmsg(c[1]+': automatisches Senden '+(cb.checked?'an':'aus')+'.')}).catch(function(){cb.checked=!cb.checked;nmsg('Speichern hat nicht geklappt.')});
+      };
+      lab.appendChild(cb);lab.appendChild(document.createTextNode(' Automatisch senden'));b.appendChild(lab);
+      var tb=el('button','btn ghost sm','Test senden');tb.type='button';tb.disabled=!ok;tb.onclick=function(){nTest(c[0])};b.appendChild(tb);
+      li.appendChild(b);st.appendChild(li);
+    });
+  }
   $('btnChannels').onclick=function(){
     var w=$('nWho');w.textContent='';
     var o=el('option',null,'Bitte wählen');o.value='';w.appendChild(o);
@@ -1468,14 +1461,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     w.value=load('fk-me')||'';nmsg('');$('nModal').hidden=false;$('nModal').scrollTop=0;
     var st=$('nStatus');st.textContent='';st.appendChild(el('li','empty','Status wird geprüft …'));
     call({op:'notify_status'}).then(function(j){
-      nDefaults=j.defaults;st.textContent='';$('nAuto').checked=j.autoSend!==false;refreshDots();
-      [['SMS',j.sms],['Anruf mit Sprachnachricht',j.call],['E-Mail',j.mail]].forEach(function(x){
-        var li=el('li','item');li.style.setProperty('--c',x[1]?'#2f6b57':'#b3372c');
-        var b=el('div','body');b.appendChild(el('div','t',x[0]));
-        b.appendChild(el('div','m',x[1]?'eingerichtet':'noch nicht eingerichtet (Anleitung: NOTIFY_SETUP.md im Repo)'));
-        li.appendChild(b);st.appendChild(li);
-      });
-      $('nTestSms').disabled=!j.sms;$('nTestCall').disabled=!j.call;$('nTestMail').disabled=!j.mail;
+      nDefaults=j.defaults;nAuto=j.autoCh||{};renderChannels(j);refreshDots();
       fillTexts(j.texts);
     }).catch(function(){st.textContent='';st.appendChild(el('li','empty','Der Status ist gerade nicht abrufbar.'))});
   };
@@ -1483,14 +1469,10 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var id=$('nWho').value;
     if(!id){nmsg('Bitte zuerst wählen, an wen der Test gehen soll.');return}
     nmsg('Wird gesendet …');
-    call({op:'notify_test',channel:ch,memberId:id}).then(function(j){
+    call(ch==='wa'?{op:'wa_test',memberId:id}:{op:'notify_test',channel:ch,memberId:id}).then(function(j){
       nmsg(j.ok?(ch==='call'?'Anruf ausgelöst. Das Telefon klingelt gleich.':'Test gesendet.'):'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
     }).catch(function(e){nmsg('Fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
   }
-  $('nAuto').onchange=function(){var on=this.checked;call({op:'settings_put',autoSend:on}).then(function(){refreshDots();nmsg(on?'Automatisches Senden ist an.':'Automatisches Senden ist aus. Es kommen nur Push-Meldungen.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')})};
-  $('nTestSms').onclick=function(){nTest('sms')};
-  $('nTestMail').onclick=function(){nTest('mail')};
-  $('nTestCall').onclick=function(){nTest('call')};
   $('nSave').onclick=function(){
     call({op:'settings_put',texts:{smsText:$('nSms').value,voiceText:$('nVoice').value,mailSubject:$('nSubj').value,mailText:$('nMail').value}})
       .then(function(j){fillTexts(j.texts);nmsg('Texte gespeichert.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')});

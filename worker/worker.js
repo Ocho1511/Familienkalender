@@ -269,6 +269,15 @@ async function sendChannel(env, ch, m, v, texts) {
 }
 const deDate = (s) => s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4);
 
+const CHANNELS = ['wa', 'sms', 'mail', 'call'];
+// Automatisches Senden je Kanal (Setup). Aeltere Gesamt-Einstellung 'autosend' gilt, solange es keine Kanalwerte gibt.
+async function getAutoCh(env) {
+  const o = await env.KV.get('autoch', 'json');
+  if (o) return { wa: o.wa !== false, sms: o.sms !== false, mail: o.mail !== false, call: o.call !== false };
+  const all = (await env.KV.get('autosend')) !== '0';
+  return { wa: all, sms: all, mail: all, call: all };
+}
+
 async function runReminders(env) {
   const now = Date.now();
   let last = Number(await env.KV.get('lastrun')) || now - 5 * 60000;
@@ -286,7 +295,7 @@ async function runReminders(env) {
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
   const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 62 * 86400000);
-  const autoOn = (await env.KV.get('autosend')) !== '0';
+  const autoMap = await getAutoCh(env);
   const catRules = {};
   (state.cats || []).forEach((c) => { catRules[c.name] = c; });
   for (const e of state.events || []) {
@@ -306,10 +315,10 @@ async function runReminders(env) {
     if (!fl || !leads.length) continue;
     const dates = e.repeat ? occDates(e, fromDay, toDay) : [e.start];
     // Grundeinstellung (Setup) gilt, sofern der Termin sie nicht ueberschreibt; Push bleibt immer
-    const autoCh = e.autoSend === undefined ? autoOn : e.autoSend;
+    const allowCh = (k) => (e.autoSend === undefined ? autoMap[k] : e.autoSend);
     for (const date of dates) for (const lead of leads) {
       const eff = { remind: lead, ...fl };
-      if (!autoCh) { eff.sms = false; eff.call = false; eff.mail = false; eff.wa = false; }
+      CHANNELS.forEach((k) => { if (!allowCh(k)) eff[k] = false; });
       const t = berlinToUtc(date, e.time || '09:00') - lead * 60000;
       if (!(t > last && t <= now)) continue;
       const dk = 'sent:' + e.id + ':' + t;
@@ -803,12 +812,18 @@ export default {
       return reply(await aiExtract(env, state, body), 200, c);
     }
     if (body.op === 'notify_status') {
-      return reply({ autoSend: (await env.KV.get('autosend')) !== '0', sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
+      const autoCh = await getAutoCh(env);
+      return reply({ autoCh, autoSend: CHANNELS.some((k) => autoCh[k]), sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
     }
     if (body.op === 'settings_put') {
-      if (typeof body.autoSend === 'boolean') await env.KV.put('autosend', body.autoSend ? '1' : '0');
+      if (typeof body.autoSend === 'boolean' || (body.autoCh && typeof body.autoCh === 'object')) {
+        const cur = await getAutoCh(env);
+        if (typeof body.autoSend === 'boolean') CHANNELS.forEach((k) => { cur[k] = body.autoSend; });
+        if (body.autoCh && typeof body.autoCh === 'object') CHANNELS.forEach((k) => { if (typeof body.autoCh[k] === 'boolean') cur[k] = body.autoCh[k]; });
+        await env.KV.put('autoch', JSON.stringify(cur));
+      }
       if (body.texts) await env.KV.put('settings', JSON.stringify(cleanTexts(body.texts)));
-      return reply({ texts: await getTexts(env), autoSend: (await env.KV.get('autosend')) !== '0' }, 200, c);
+      return reply({ texts: await getTexts(env), autoCh: await getAutoCh(env) }, 200, c);
     }
     if (body.op === 'send_now') {
       const e = state.events.find((x) => x.id === body.id);
