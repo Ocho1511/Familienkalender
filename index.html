@@ -351,7 +351,6 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <label class="chk" for="fRemindWa"><input type="checkbox" id="fRemindWa"> WhatsApp</label>
     <label class="chk" for="fRemindSms"><input type="checkbox" id="fRemindSms"> SMS</label>
     <label class="chk" for="fRemindMail"><input type="checkbox" id="fRemindMail"> E-Mail</label>
-    <label class="chk" for="fRemindCall"><input type="checkbox" id="fRemindCall"> Kurzer Anruf mit Sprachnachricht</label>
     <label class="chk" for="fPriv"><input type="checkbox" id="fPriv"> Privat (erscheint im „nur Privat"-Abo für Outlook)</label>
     <label for="fAuto">Automatisch versenden <select id="fAuto"><option value="">Nach Einstellung im Setup</option><option value="1">Ja, bei diesem Termin automatisch senden</option><option value="0">Nein, bei diesem Termin nicht automatisch senden</option></select></label>
     <label for="fNote">Notiz (optional) <textarea id="fNote" rows="2" maxlength="500"></textarea></label>
@@ -459,12 +458,11 @@ body:has(.modal:not([hidden])) .totop{display:none}
 <div class="modal" id="nModal" hidden style="z-index:25">
   <div class="sheet">
     <h2>Versand-Kanäle</h2>
-    <p class="sub" style="margin:0">Hier siehst du für WhatsApp, SMS, E-Mail und Anruf, ob der Kanal eingerichtet ist, und schaltest das automatische Senden je Kanal ein oder aus. Automatisch gesendet wird zu den Erinnerungszeitpunkten eines Termins, wenn der Kanal am Termin oder an der Art angekreuzt ist. Jeder Termin kann den Schalter für sich überschreiben. Push-Meldungen sind davon nicht betroffen.</p>
+    <p class="sub" style="margin:0">Hier siehst du für WhatsApp, SMS und E-Mail, ob der Kanal eingerichtet ist, und schaltest das automatische Senden je Kanal ein oder aus. Automatisch gesendet wird zu den Erinnerungszeitpunkten eines Termins, wenn der Kanal am Termin oder an der Art angekreuzt ist. Jeder Termin kann den Schalter für sich überschreiben. Push-Meldungen sind davon nicht betroffen.</p>
     <label for="nWho">Test an <select id="nWho"></select></label>
     <ul class="list" id="nStatus"></ul>
     <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
     <label for="nSms">SMS-Text <textarea id="nSms" rows="3" maxlength="300"></textarea></label>
-    <label for="nVoice">Sprachnachricht beim Anruf <textarea id="nVoice" rows="3" maxlength="400"></textarea></label>
     <label for="nSubj">E-Mail-Betreff <input id="nSubj" maxlength="150"></label>
     <label for="nMail">E-Mail-Text <textarea id="nMail" rows="6" maxlength="1500"></textarea></label>
     <p class="sub" style="margin:0">Platzhalter: {name} {titel} {datum} {zeit} {ort} {wer} {vorlauf}. {zeit} ergibt „um 15:30 Uhr" oder „ganztägig", {vorlauf} zum Beispiel „in 1 Std.".</p>
@@ -483,7 +481,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <div class="actions"><button class="btn ghost sm" id="rTest" type="button">Test senden</button><button class="btn danger sm" id="rOff" type="button">Ausschalten</button></div>
     <label class="chk" for="rSound"><input type="checkbox" id="rSound" checked> Ton und Vibration bei Erinnerung</label>
     <div class="sub" style="margin-top:-4px">Der Ton hängt auch von den iPhone-Einstellungen ab: Einstellungen, Mitteilungen, Familienkalender, „Töne" einschalten. Der Seitenschalter für Klingelton aus und ein Fokus-Modus machen sie stumm.</div>
-    <div class="actions"><button class="btn ghost sm" id="btnChannels" type="button">Versand-Kanäle einstellen (WhatsApp, SMS, E-Mail, Anruf)</button></div>
+    <div class="actions"><button class="btn ghost sm" id="btnChannels" type="button">Versand-Kanäle einstellen (WhatsApp, SMS, E-Mail)</button></div>
     <div class="actions"><button class="btn ghost sm" id="btnCats" type="button">Arten und Regeln einstellen</button></div>
     <div class="err" id="rMsg" role="alert"></div>
     <div class="actions"><button class="btn ghost" id="rClose" type="button">Schließen</button></div>
@@ -868,7 +866,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var ml=el('a','btn ghost sm','E-Mail');ml.href='mailto:'+mails.join(',')+'?subject='+encodeURIComponent('Termin: '+e.title)+'&body='+t;box.appendChild(ml);
     var srv=el('div','send'),sm2=el('div','sub');
     srv.appendChild(el('span','sub','Jetzt über den Server senden an '+(e.who&&memberOf(e.who)?memberOf(e.who).name:'alle')+':'));
-    [['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail'],['call','Anruf']].forEach(function(x){
+    [['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail']].forEach(function(x){
       var b=el('button','btn ghost sm',x[1]);b.type='button';
       b.onclick=function(){
         if(!window.confirm(x[1]+' zum Termin „'+e.title+'" jetzt senden?'))return;
@@ -1057,7 +1055,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     return out.sort(function(a,b){return b-a}).slice(0,6);
   }
   function ruleText(c){
-    var ch=[];if(c.push!==false)ch.push('Push');if(c.wa)ch.push('WhatsApp');if(c.sms)ch.push('SMS');if(c.mail)ch.push('E-Mail');if(c.call)ch.push('Anruf');
+    var ch=[];if(c.push!==false)ch.push('Push');if(c.wa)ch.push('WhatsApp');if(c.sms)ch.push('SMS');if(c.mail)ch.push('E-Mail');
     return leadList(leadsOf(c))+' per '+(ch.join(', ')||'keinem Kanal');
   }
   function fillCats(selected){
@@ -1108,7 +1106,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     $('fNote').value=e&&e.note?e.note:'';
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';catHint();
     $('fExtra').value=e&&e.extra?e.extra.map(function(m){return Math.round(m/1440)}).join(', '):'';
-    $('fRemindWa').checked=!!(e&&e.remindWa);$('fRemindSms').checked=!!(e&&e.remindSms);$('fRemindMail').checked=!!(e&&e.remindMail);$('fRemindCall').checked=!!(e&&e.remindCall);
+    $('fRemindWa').checked=!!(e&&e.remindWa);$('fRemindSms').checked=!!(e&&e.remindSms);$('fRemindMail').checked=!!(e&&e.remindMail);
     $('fAuto').value=e&&e.autoSend===true?'1':e&&e.autoSend===false?'0':'';
     $('fPriv').checked=e?!!e.priv:true;
     $('fRepeat').value=e&&e.repeat?e.repeat:'';$('fUntil').value=e&&e.until?e.until:'';$('fPlace').value=e&&e.place?e.place:'';syncRepeat();
@@ -1145,7 +1143,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       remind:$('fRemind').value===''?null:Number($('fRemind').value),
       extra:extraMinutes(),
       remindWa:rOn()&&$('fRemindWa').checked,
-      remindSms:rOn()&&$('fRemindSms').checked,remindMail:rOn()&&$('fRemindMail').checked,remindCall:rOn()&&$('fRemindCall').checked,
+      remindSms:rOn()&&$('fRemindSms').checked,remindMail:rOn()&&$('fRemindMail').checked,
       autoSend:$('fAuto').value===''?undefined:$('fAuto').value==='1',
       priv:$('fPriv').checked,
       repeat:$('fRepeat').value||undefined,until:$('fRepeat').value?$('fUntil').value:'',place:$('fPlace').value.trim(),
@@ -1367,7 +1365,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       else setDot('btnRemind','off','Push-Erinnerungen sind auf diesem Gerät aus');
     }).catch(function(){});
     call({op:'notify_status'}).then(function(j){
-      var names={wa:'WhatsApp',sms:'SMS',mail:'E-Mail',call:'Anruf'},ac=j.autoCh||{},on=[],cfg=0;
+      var names={wa:'WhatsApp',sms:'SMS',mail:'E-Mail'},ac=j.autoCh||{},on=[],cfg=0;
       Object.keys(names).forEach(function(k){if(j[k]){cfg++;if(ac[k]!==false)on.push(names[k])}});
       if(!cfg)setDot('btnChannels','off','Kein Kanal eingerichtet');
       else if(!on.length)setDot('btnChannels','off','Automatisches Senden ist überall aus');
@@ -1432,11 +1430,11 @@ body:has(.modal:not([hidden])) .totop{display:none}
     }).catch(function(e){rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
   };
 
-  /* ---- Versand-Kanäle: WhatsApp, SMS, E-Mail, Anruf (Status, automatisch senden je Kanal, Tests, Texte) ---- */
+  /* ---- Versand-Kanäle: WhatsApp, SMS, E-Mail (Status, automatisch senden je Kanal, Tests, Texte) ---- */
   var nDefaults=null,nAuto={};
-  var CHANNELS=[['wa','WhatsApp','WHATSAPP_SETUP.md'],['sms','SMS','NOTIFY_SETUP.md'],['mail','E-Mail','NOTIFY_SETUP.md'],['call','Anruf mit Sprachnachricht','NOTIFY_SETUP.md']];
+  var CHANNELS=[['wa','WhatsApp','WHATSAPP_SETUP.md'],['sms','SMS','NOTIFY_SETUP.md'],['mail','E-Mail','NOTIFY_SETUP.md']];
   function nmsg(t){$('nMsg').textContent=t}
-  function fillTexts(t){$('nSms').value=t.smsText;$('nVoice').value=t.voiceText;$('nSubj').value=t.mailSubject;$('nMail').value=t.mailText}
+  function fillTexts(t){$('nSms').value=t.smsText;$('nSubj').value=t.mailSubject;$('nMail').value=t.mailText}
   function renderChannels(j){
     var st=$('nStatus');st.textContent='';
     CHANNELS.forEach(function(c){
@@ -1470,11 +1468,11 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(!id){nmsg('Bitte zuerst wählen, an wen der Test gehen soll.');return}
     nmsg('Wird gesendet …');
     call(ch==='wa'?{op:'wa_test',memberId:id}:{op:'notify_test',channel:ch,memberId:id}).then(function(j){
-      nmsg(j.ok?(ch==='call'?'Anruf ausgelöst. Das Telefon klingelt gleich.':'Test gesendet.'):'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
+      nmsg(j.ok?'Test gesendet.':'Nicht gesendet: '+(j.error||j.detail||('Status '+j.status)));
     }).catch(function(e){nmsg('Fehlgeschlagen: '+(e&&e.message?e.message:'Fehler'))});
   }
   $('nSave').onclick=function(){
-    call({op:'settings_put',texts:{smsText:$('nSms').value,voiceText:$('nVoice').value,mailSubject:$('nSubj').value,mailText:$('nMail').value}})
+    call({op:'settings_put',texts:{smsText:$('nSms').value,mailSubject:$('nSubj').value,mailText:$('nMail').value}})
       .then(function(j){fillTexts(j.texts);nmsg('Texte gespeichert.')}).catch(function(){nmsg('Speichern hat nicht geklappt.')});
   };
   $('nReset').onclick=function(){if(nDefaults){fillTexts(nDefaults);nmsg('Standardtexte eingesetzt. Zum Übernehmen speichern.')}};
@@ -1496,13 +1494,13 @@ body:has(.modal:not([hidden])) .totop{display:none}
       inp.value=leadsOf(c).map(function(m){return Math.round(m/1440)}).join(', ');
       inp.addEventListener('input',function(){
         var mins=parseDays(inp.value);
-        if(!mins.length){delete c.reminds;delete c.remind;delete c.push;delete c.wa;delete c.sms;delete c.mail;delete c.call}
+        if(!mins.length){delete c.reminds;delete c.remind;delete c.push;delete c.wa;delete c.sms;delete c.mail}
         else{c.reminds=mins;delete c.remind;if(c.push===undefined)c.push=true}
         cg.hidden=!mins.length;
       });
       lab.appendChild(inp);row.appendChild(lab);
       var cg=el('div','catgrid');cg.hidden=!leadsOf(c).length;
-      [['push','Push'],['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail'],['call','Anruf']].forEach(function(k){
+      [['push','Push'],['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail']].forEach(function(k){
         var l2=el('label','chk');var cb=document.createElement('input');cb.type='checkbox';cb.checked=k[0]==='push'?c.push!==false:!!c[k[0]];
         cb.addEventListener('change',function(){if(k[0]==='push')c.push=cb.checked;else if(cb.checked)c[k[0]]=true;else delete c[k[0]]});
         l2.appendChild(cb);l2.appendChild(document.createTextNode(' '+k[1]));cg.appendChild(l2);

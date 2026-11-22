@@ -27,7 +27,7 @@ function cleanCats(list) {
     if (leads.length) {
       item.reminds = leads;
       item.push = c.push !== false;
-      ['wa', 'sms', 'mail', 'call'].forEach((k) => { if (c[k] === true) item[k] = true; });
+      ['wa', 'sms', 'mail'].forEach((k) => { if (c[k] === true) item[k] = true; });
     }
     out.push(item);
   });
@@ -117,7 +117,6 @@ function cleanEvent(e) {
     remindWa: real && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
     remindSms: real && e.remindSms === true ? true : undefined,
     remindMail: real && e.remindMail === true ? true : undefined,
-    remindCall: real && e.remindCall === true ? true : undefined,
     autoSend: e.autoSend === true ? true : e.autoSend === false ? false : undefined,
     priv: e.priv === true ? true : undefined,
     extra: extra.length ? extra : undefined,
@@ -219,16 +218,15 @@ function occDates(e, from, to) {
   }
   return out;
 }
-// ---- Weitere Kanaele: SMS und Anruf mit Sprachnachricht (Twilio), E-Mail (Brevo) ----
-const smsConfigured = (env) => !!(env.TWILIO_SID && env.TWILIO_TOKEN && env.TWILIO_FROM);
+// ---- Weitere Kanaele: SMS und E-Mail ueber Brevo (ein API-Schluessel fuer beides) ----
+const smsConfigured = (env) => !!env.BREVO_KEY;
 const mailConfigured = (env) => !!(env.BREVO_KEY && env.MAIL_FROM);
 const DEFAULT_TEXTS = {
   smsText: 'Erinnerung Familienkalender: {titel}, {datum} {zeit}{ort} ({wer}, {vorlauf})',
-  voiceText: 'Hallo {name}. Erinnerung vom Familienkalender. {titel}, am {datum}, {zeit}. {vorlauf}.',
   mailSubject: 'Erinnerung: {titel} am {datum}',
   mailText: 'Hallo {name},\n\nzur Erinnerung: {titel}\nWann: {datum}, {zeit}\nWo: {ortText}\nFür: {wer}\n\nDein Familienkalender',
 };
-const TEXT_LIMITS = { smsText: 300, voiceText: 400, mailSubject: 150, mailText: 1500 };
+const TEXT_LIMITS = { smsText: 300, mailSubject: 150, mailText: 1500 };
 function cleanTexts(t) {
   const out = {};
   if (t && typeof t === 'object') Object.keys(DEFAULT_TEXTS).forEach((k) => { if (typeof t[k] === 'string' && t[k].trim()) out[k] = t[k].slice(0, TEXT_LIMITS[k]); });
@@ -236,19 +234,28 @@ function cleanTexts(t) {
 }
 async function getTexts(env) { return { ...DEFAULT_TEXTS, ...cleanTexts(await env.KV.get('settings', 'json')) }; }
 const fillText = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] !== undefined ? v[k] : m));
-const xmlEsc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-async function twilio(env, path, params) {
-  const r = await fetch('https://api.twilio.com/2010-04-01/Accounts/' + encodeURIComponent(env.TWILIO_SID) + '/' + path, {
-    method: 'POST',
-    headers: { Authorization: 'Basic ' + btoa(env.TWILIO_SID + ':' + String(env.TWILIO_TOKEN).trim()), 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params).toString(),
-  });
+// Zeichen, die in einer normalen (GSM-7) SMS Platz haben; alles andere braucht Unicode-SMS (kuerzer, teurer)
+const GSM_RE = /^[\w\s@£$¥èéùìòÇØøÅåΔΦΓΛΩΠΨΣΘΞÆæßÉ!"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà^{}\\\[~\]|€]*$/;
+async function smsSend(env, to, text) {
+  const body = {
+    sender: String(env.SMS_SENDER || 'Familie').replace(/[^A-Za-z0-9]/g, '').slice(0, 11) || 'Familie',
+    recipient: to, content: text, type: 'transactional', unicodeEnabled: !GSM_RE.test(text),
+  };
+  let r;
+  // die Brevo-Doku nennt zwei Adressen fuer denselben Versand: erst /sms, bei 404 /send
+  for (const path of ['sms', 'send']) {
+    r = await fetch('https://api.brevo.com/v3/transactionalSMS/' + path, {
+      method: 'POST',
+      headers: { 'api-key': String(env.BREVO_KEY).trim(), 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.status !== 404) break;
+  }
   let detail = '';
   try { const j = await r.json(); detail = (j && j.message) || ''; } catch (e) { /* kein JSON */ }
+  if (r.status === 402 || /credit/i.test(detail)) detail = 'Kein SMS-Guthaben bei Brevo. Bitte dort Guthaben aufladen. (' + detail + ')';
   return { ok: r.ok, status: r.status, detail };
 }
-const smsSend = (env, to, text) => twilio(env, 'Messages.json', { To: '+' + to, From: env.TWILIO_FROM, Body: text });
-const callSend = (env, to, text) => twilio(env, 'Calls.json', { To: '+' + to, From: env.TWILIO_FROM, Twiml: '<Response><Say language="de-DE" voice="alice">' + xmlEsc(text) + '</Say></Response>' });
 async function mailSend(env, toEmail, toName, subject, text) {
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -263,19 +270,18 @@ async function mailSend(env, toEmail, toName, subject, text) {
 async function sendChannel(env, ch, m, v, texts) {
   const vars = { ...v, name: m.name };
   if (ch === 'sms') return smsSend(env, waNumber(m.phone || m.whatsapp), fillText(texts.smsText, vars));
-  if (ch === 'call') return callSend(env, waNumber(m.phone || m.whatsapp), fillText(texts.voiceText, vars));
   if (ch === 'mail') return mailSend(env, m.email, m.name, fillText(texts.mailSubject, vars), fillText(texts.mailText, vars));
   return { ok: false, status: 0, detail: 'Unbekannter Kanal' };
 }
 const deDate = (s) => s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4);
 
-const CHANNELS = ['wa', 'sms', 'mail', 'call'];
+const CHANNELS = ['wa', 'sms', 'mail'];
 // Automatisches Senden je Kanal (Setup). Aeltere Gesamt-Einstellung 'autosend' gilt, solange es keine Kanalwerte gibt.
 async function getAutoCh(env) {
   const o = await env.KV.get('autoch', 'json');
-  if (o) return { wa: o.wa !== false, sms: o.sms !== false, mail: o.mail !== false, call: o.call !== false };
+  if (o) return { wa: o.wa !== false, sms: o.sms !== false, mail: o.mail !== false };
   const all = (await env.KV.get('autosend')) !== '0';
-  return { wa: all, sms: all, mail: all, call: all };
+  return { wa: all, sms: all, mail: all };
 }
 
 async function runReminders(env) {
@@ -301,13 +307,13 @@ async function runReminders(env) {
   for (const e of state.events || []) {
     // eigene Einstellung des Termins hat Vorrang, sonst gilt die Regel der Art; zusaetzliche Zeitpunkte kommen dazu
     let leads = [], fl = null;
-    const evFl = { push: true, wa: !!e.remindWa, sms: !!e.remindSms, mail: !!e.remindMail, call: !!e.remindCall };
+    const evFl = { push: true, wa: !!e.remindWa, sms: !!e.remindSms, mail: !!e.remindMail };
     if (e.remind !== undefined && e.remind !== null) {
       if (e.remind >= 0) { leads = [e.remind]; fl = evFl; }
     } else {
       const rule = catRules[e.cat];
       const rl = rule ? (rule.reminds || (rule.remind !== undefined ? [rule.remind] : [])) : [];
-      if (rl.length) { leads = rl.slice(); fl = { push: rule.push !== false, wa: !!rule.wa, sms: !!rule.sms, mail: !!rule.mail, call: !!rule.call }; }
+      if (rl.length) { leads = rl.slice(); fl = { push: rule.push !== false, wa: !!rule.wa, sms: !!rule.sms, mail: !!rule.mail }; }
       else if (e.extra && e.extra.length) fl = evFl;
     }
     if (fl && e.extra && !(e.remind < 0)) leads = leads.concat(e.extra);
@@ -329,7 +335,6 @@ async function runReminders(env) {
       const rec2 = (state.members || []).filter((m) => !e.who || m.id === e.who);
       const vars = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: leadText(eff.remind) };
       if (eff.sms && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'sms', m, v: vars }));
-      if (eff.call && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'call', m, v: vars }));
       if (eff.mail && mailConfigured(env)) rec2.filter((m) => m.email).forEach((m) => chQueue.push({ ch: 'mail', m, v: vars }));
       if (eff.wa && waConfigured(env)) {
         const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
@@ -813,7 +818,7 @@ export default {
     }
     if (body.op === 'notify_status') {
       const autoCh = await getAutoCh(env);
-      return reply({ autoCh, autoSend: CHANNELS.some((k) => autoCh[k]), sms: smsConfigured(env), call: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
+      return reply({ autoCh, autoSend: CHANNELS.some((k) => autoCh[k]), sms: smsConfigured(env), mail: mailConfigured(env), wa: waConfigured(env), texts: await getTexts(env), defaults: DEFAULT_TEXTS }, 200, c);
     }
     if (body.op === 'settings_put') {
       if (typeof body.autoSend === 'boolean' || (body.autoCh && typeof body.autoCh === 'object')) {
@@ -829,7 +834,7 @@ export default {
       const e = state.events.find((x) => x.id === body.id);
       if (!e) return reply({ ok: false, error: 'Termin nicht gefunden' }, 200, c);
       const date = DATE_RE.test(body.date || '') ? body.date : e.start;
-      const want = [...new Set((Array.isArray(body.channels) ? body.channels : []).filter((x) => ['wa', 'sms', 'mail', 'call'].includes(x)))];
+      const want = [...new Set((Array.isArray(body.channels) ? body.channels : []).filter((x) => ['wa', 'sms', 'mail'].includes(x)))];
       if (!want.length) return reply({ ok: false, error: 'Kein Kanal gewaehlt' }, 200, c);
       const who = e.who && state.members.find((m) => m.id === e.who) ? state.members.find((m) => m.id === e.who).name : 'Alle';
       const rec = state.members.filter((m) => !e.who || m.id === e.who);
@@ -837,7 +842,7 @@ export default {
       const texts = await getTexts(env);
       const report = [];
       for (const ch of want) {
-        const label = { wa: 'WhatsApp', sms: 'SMS', mail: 'E-Mail', call: 'Anruf' }[ch];
+        const label = { wa: 'WhatsApp', sms: 'SMS', mail: 'E-Mail' }[ch];
         const conf = ch === 'wa' ? waConfigured(env) : ch === 'mail' ? mailConfigured(env) : smsConfigured(env);
         if (!conf) { report.push(label + ': im Worker nicht eingerichtet'); continue; }
         const to = rec.filter((m) => ch === 'mail' ? m.email : ch === 'wa' ? waNumber(m.whatsapp || m.phone) : waNumber(m.phone || m.whatsapp));
@@ -855,7 +860,7 @@ export default {
     }
     if (body.op === 'notify_test') {
       const ch = String(body.channel || '');
-      if (!['sms', 'call', 'mail'].includes(ch)) return reply({ ok: false, error: 'Unbekannter Kanal' }, 200, c);
+      if (!['sms', 'mail'].includes(ch)) return reply({ ok: false, error: 'Unbekannter Kanal' }, 200, c);
       if (ch === 'mail' ? !mailConfigured(env) : !smsConfigured(env)) return reply({ ok: false, error: 'Dieser Kanal ist im Worker noch nicht eingerichtet' }, 200, c);
       const m = state.members.find((x) => x.id === body.memberId);
       if (!m) return reply({ ok: false, error: 'Person nicht gefunden' }, 200, c);
