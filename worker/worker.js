@@ -19,11 +19,11 @@ function cleanCats(list) {
     const name = str(c.name, 30).replace(/[\r\n\t]+/g, ' ').trim();
     if (!name || seen.has(name.toLowerCase())) return;
     seen.add(name.toLowerCase());
-    const r = Number(c.remind);
-    const hasRule = c.remind !== null && c.remind !== undefined && c.remind !== '' && Number.isInteger(r) && r >= 0 && r <= 43200;
+    const raw = Array.isArray(c.reminds) ? c.reminds : (c.remind !== null && c.remind !== undefined && c.remind !== '' ? [c.remind] : []);
+    const leads = [...new Set(raw.map(Number).filter((x) => Number.isInteger(x) && x >= 0 && x <= 86400))].sort((a, b) => b - a).slice(0, 6);
     const item = { name };
-    if (hasRule) {
-      item.remind = r;
+    if (leads.length) {
+      item.reminds = leads;
       item.push = c.push !== false;
       ['wa', 'sms', 'mail', 'call'].forEach((k) => { if (c[k] === true) item[k] = true; });
     }
@@ -104,7 +104,8 @@ function cleanEvent(e) {
   const end = !repeat && DATE_RE.test(e.end || '') && e.end >= e.start ? e.end : '';
   const until = repeat && DATE_RE.test(e.until || '') && e.until >= e.start ? e.until : undefined;
   const hasRemind = e.remind !== null && e.remind !== undefined && e.remind !== '' && REMINDS.includes(Number(e.remind));
-  const real = hasRemind && Number(e.remind) >= 0;
+  const extra = Array.isArray(e.extra) && Number(e.remind) !== -1 ? [...new Set(e.extra.map(Number).filter((x) => Number.isInteger(x) && x >= 0 && x <= 86400))].sort((a, b) => b - a).slice(0, 5) : [];
+  const real = (hasRemind && Number(e.remind) >= 0) || extra.length > 0;
   return {
     id: e.id, title, who: ID_RE.test(e.who || '') ? e.who : '',
     cat: str(e.cat, 30).replace(/[\r\n\t]+/g, ' ').trim() || 'Termin',
@@ -115,6 +116,7 @@ function cleanEvent(e) {
     remindSms: real && e.remindSms === true ? true : undefined,
     remindMail: real && e.remindMail === true ? true : undefined,
     remindCall: real && e.remindCall === true ? true : undefined,
+    extra: extra.length ? extra : undefined,
     repeat, until,
     skip: repeat && Array.isArray(e.skip) ? (() => { const a = [...new Set(e.skip.filter((x) => DATE_RE.test(x || '')))].sort().slice(0, 100); return a.length ? a : undefined; })() : undefined,
     place: str(e.place, 80).replace(/[\r\n\t]+/g, ' ').trim() || undefined,
@@ -279,22 +281,28 @@ async function runReminders(env) {
   const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
-  const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 4 * 86400000);
+  const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 62 * 86400000);
   const catRules = {};
   (state.cats || []).forEach((c) => { catRules[c.name] = c; });
   for (const e of state.events || []) {
-    // eigene Einstellung des Termins hat Vorrang, sonst gilt die Regel der Art
-    let eff = null;
+    // eigene Einstellung des Termins hat Vorrang, sonst gilt die Regel der Art; zusaetzliche Zeitpunkte kommen dazu
+    let leads = [], fl = null;
+    const evFl = { push: true, wa: !!e.remindWa, sms: !!e.remindSms, mail: !!e.remindMail, call: !!e.remindCall };
     if (e.remind !== undefined && e.remind !== null) {
-      if (e.remind >= 0) eff = { remind: e.remind, push: true, wa: !!e.remindWa, sms: !!e.remindSms, mail: !!e.remindMail, call: !!e.remindCall };
+      if (e.remind >= 0) { leads = [e.remind]; fl = evFl; }
     } else {
       const rule = catRules[e.cat];
-      if (rule && rule.remind !== undefined) eff = { remind: rule.remind, push: rule.push !== false, wa: !!rule.wa, sms: !!rule.sms, mail: !!rule.mail, call: !!rule.call };
+      const rl = rule ? (rule.reminds || (rule.remind !== undefined ? [rule.remind] : [])) : [];
+      if (rl.length) { leads = rl.slice(); fl = { push: rule.push !== false, wa: !!rule.wa, sms: !!rule.sms, mail: !!rule.mail, call: !!rule.call }; }
+      else if (e.extra && e.extra.length) fl = evFl;
     }
-    if (!eff) continue;
+    if (fl && e.extra && !(e.remind < 0)) leads = leads.concat(e.extra);
+    leads = [...new Set(leads)];
+    if (!fl || !leads.length) continue;
     const dates = e.repeat ? occDates(e, fromDay, toDay) : [e.start];
-    for (const date of dates) {
-      const t = berlinToUtc(date, e.time || '09:00') - eff.remind * 60000;
+    for (const date of dates) for (const lead of leads) {
+      const eff = { remind: lead, ...fl };
+      const t = berlinToUtc(date, e.time || '09:00') - lead * 60000;
       if (!(t > last && t <= now)) continue;
       const dk = 'sent:' + e.id + ':' + t;
       if (await env.KV.get(dk)) continue;

@@ -339,6 +339,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       </select>
     </label>
     <div class="sub" style="margin-top:-6px">Ohne Uhrzeit kommt die Erinnerung um 9 Uhr. Sie geht an die Person des Eintrags, bei „Alle" an alle.</div>
+    <label for="fExtra">Zusätzliche Erinnerungen, Tage vorher (optional) <input id="fExtra" maxlength="40" placeholder="z. B. 14, 7"></label>
     <div class="sub" id="fCatHint" hidden></div>
     <div class="sub" style="margin-bottom:-4px">Zusätzlich erinnern per:</div>
     <label class="chk" for="fRemindWa"><input type="checkbox" id="fRemindWa"> WhatsApp</label>
@@ -398,7 +399,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
 <div class="modal" id="cModal" hidden style="z-index:25">
   <div class="sheet">
     <h2>Arten und Regeln</h2>
-    <p class="sub" style="margin:0">Mit einer Regel erinnert die App bei jedem Termin dieser Art automatisch, zum Beispiel 3 Tage vorher. Eine eigene Einstellung am Termin hat Vorrang. Ohne Zahl gibt es keine Regel.</p>
+    <p class="sub" style="margin:0">Mit einer Regel erinnert die App bei jedem Termin dieser Art automatisch, zum Beispiel 14, 7 und 1 Tag vorher. Eine eigene Einstellung am Termin hat Vorrang. Ohne Zahl gibt es keine Regel.</p>
     <div class="list" id="cList"></div>
     <label for="cNew">Neue Art <input id="cNew" maxlength="30" placeholder="z. B. Hausaufgaben"></label>
     <div class="actions"><button class="btn ghost sm" id="cAdd" type="button">Art hinzufügen</button></div>
@@ -888,9 +889,24 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(min<1440)return (min/60)+' Std. vorher';
     var d=min/1440;return (d%1?d.toFixed(1):d)+(d===1?' Tag':' Tage')+' vorher';
   }
+  function leadsOf(c){return c.reminds||(c.remind!==undefined?[c.remind]:[])}
+  function leadList(mins){
+    if(!mins.length)return '';
+    if(mins.every(function(m){return m>=1440&&m%1440===0})){
+      var d=mins.map(function(m){return m/1440});
+      var t=d.length>1?d.slice(0,-1).join(', ')+' und '+d[d.length-1]:String(d[0]);
+      return t+(d.length===1&&d[0]===1?' Tag':' Tage')+' vorher';
+    }
+    return mins.map(leadLabel).join(', ');
+  }
+  function parseDays(text){
+    var seen={},out=[];
+    String(text||'').split(/[^0-9]+/).forEach(function(x){if(x==='')return;var n=+x;if(n>=0&&n<=60&&!seen[n]){seen[n]=1;out.push(n*1440)}});
+    return out.sort(function(a,b){return b-a}).slice(0,6);
+  }
   function ruleText(c){
     var ch=[];if(c.push!==false)ch.push('Push');if(c.wa)ch.push('WhatsApp');if(c.sms)ch.push('SMS');if(c.mail)ch.push('E-Mail');if(c.call)ch.push('Anruf');
-    return leadLabel(c.remind)+' per '+(ch.join(', ')||'keinem Kanal');
+    return leadList(leadsOf(c))+' per '+(ch.join(', ')||'keinem Kanal');
   }
   function fillCats(selected){
     var sel2=$('fCat');sel2.textContent='';
@@ -902,13 +918,14 @@ body:has(.modal:not([hidden])) .totop{display:none}
   }
   function catHint(){
     var h=$('fCatHint'),name=$('fCat').value,rule=null;
-    cats.forEach(function(c){if(c.name===name&&c.remind!==undefined)rule=c});
+    cats.forEach(function(c){if(c.name===name&&leadsOf(c).length)rule=c});
     var v=$('fRemind').value;
     if(rule&&v===''){h.textContent='Regel für „'+name+'": erinnert '+ruleText(rule)+'.';h.hidden=false}
     else if(rule&&v==='-1'){h.textContent='Die Regel für „'+name+'" gilt für diesen Termin nicht.';h.hidden=false}
     else h.hidden=true;
   }
-  function rOn(){var v=$('fRemind').value;return v!==''&&v!=='-1'}
+  function extraMinutes(){return $('fRemind').value==='-1'?[]:parseDays($('fExtra').value).slice(0,5)}
+  function rOn(){var v=$('fRemind').value;return (v!==''&&v!=='-1')||(v!=='-1'&&extraMinutes().length>0)}
   $('fCat').addEventListener('change',catHint);$('fRemind').addEventListener('change',catHint);
   function syncRepeat(){
     var on=!!$('fRepeat').value;
@@ -928,6 +945,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     $('fTime').value=e&&e.time?e.time:'';
     $('fNote').value=e&&e.note?e.note:'';
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';catHint();
+    $('fExtra').value=e&&e.extra?e.extra.map(function(m){return Math.round(m/1440)}).join(', '):'';
     $('fRemindWa').checked=!!(e&&e.remindWa);$('fRemindSms').checked=!!(e&&e.remindSms);$('fRemindMail').checked=!!(e&&e.remindMail);$('fRemindCall').checked=!!(e&&e.remindCall);
     $('fRepeat').value=e&&e.repeat?e.repeat:'';$('fUntil').value=e&&e.until?e.until:'';$('fPlace').value=e&&e.place?e.place:'';syncRepeat();
     var sb=$('evSendBox');sb.textContent='';if(e)sb.appendChild(sendBox(e,day||(e.repeat?selected:e.start)));
@@ -960,6 +978,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if($('fRepeat').value&&$('fUntil').value&&$('fUntil').value<start){$('evErr').textContent='Das Ende der Wiederholung liegt vor dem Start.';return}
     var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:$('fRepeat').value?'':end,time:$('fTime').value,note:$('fNote').value.trim(),
       remind:$('fRemind').value===''?null:Number($('fRemind').value),
+      extra:extraMinutes(),
       remindWa:rOn()&&$('fRemindWa').checked,
       remindSms:rOn()&&$('fRemindSms').checked,remindMail:rOn()&&$('fRemindMail').checked,remindCall:rOn()&&$('fRemindCall').checked,
       repeat:$('fRepeat').value||undefined,until:$('fRepeat').value?$('fUntil').value:'',place:$('fPlace').value.trim(),
@@ -1267,17 +1286,17 @@ body:has(.modal:not([hidden])) .totop{display:none}
       var head=el('div','cathead');head.appendChild(el('b',null,c.name));
       var del=el('button','btn danger sm','Entfernen');del.type='button';
       del.onclick=function(){catsDraft.splice(i,1);renderCatsDialog()};head.appendChild(del);row.appendChild(head);
-      var lab=el('label',null,'Erinnern ... Tage vorher (leer = keine Regel)');
-      var inp=document.createElement('input');inp.type='number';inp.min='0';inp.max='30';inp.step='1';inp.setAttribute('inputmode','numeric');
-      inp.value=c.remind!==undefined?String(Math.round(c.remind/1440)):'';inp.id='cd_'+i;
+      var lab=el('label',null,'Erinnern ... Tage vorher (mehrere mit Komma, z. B. 14, 7, 1; leer = keine Regel)');
+      var inp=document.createElement('input');inp.type='text';inp.maxLength=30;inp.id='cd_'+i;inp.placeholder='z. B. 14, 7, 1';
+      inp.value=leadsOf(c).map(function(m){return Math.round(m/1440)}).join(', ');
       inp.addEventListener('input',function(){
-        var v=inp.value.trim();
-        if(v===''){delete c.remind;delete c.push;delete c.wa;delete c.sms;delete c.mail;delete c.call}
-        else{c.remind=Math.max(0,Math.min(30,Math.round(+v)))*1440;if(c.push===undefined)c.push=true}
-        cg.hidden=(v==='');
+        var mins=parseDays(inp.value);
+        if(!mins.length){delete c.reminds;delete c.remind;delete c.push;delete c.wa;delete c.sms;delete c.mail;delete c.call}
+        else{c.reminds=mins;delete c.remind;if(c.push===undefined)c.push=true}
+        cg.hidden=!mins.length;
       });
       lab.appendChild(inp);row.appendChild(lab);
-      var cg=el('div','catgrid');cg.hidden=c.remind===undefined;
+      var cg=el('div','catgrid');cg.hidden=!leadsOf(c).length;
       [['push','Push'],['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail'],['call','Anruf']].forEach(function(k){
         var l2=el('label','chk');var cb=document.createElement('input');cb.type='checkbox';cb.checked=k[0]==='push'?c.push!==false:!!c[k[0]];
         cb.addEventListener('change',function(){if(k[0]==='push')c.push=cb.checked;else if(cb.checked)c[k[0]]=true;else delete c[k[0]]});
