@@ -192,6 +192,11 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
 @media (prefers-reduced-motion:reduce){.item.flash{animation:none;box-shadow:0 0 0 2px var(--accent)}}
 .day.feiertag .n,.mini button.feiertag{color:var(--danger)}
 .day.ferien{border-style:dashed}
+.totop{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:15;
+  width:48px;height:48px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-fg);display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 14px rgba(0,0,0,.28);cursor:pointer;padding:0}
+.totop[hidden]{display:none}
+body:has(.modal:not([hidden])) .totop{display:none}
 </style>
 </head>
 <body>
@@ -288,6 +293,10 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
     </div>
   </div>
 </div>
+
+<button id="toTop" class="totop" type="button" aria-label="Nach oben" title="Nach oben" hidden>
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</button>
 
 <!-- Eintrag -->
 <div class="modal" id="evModal" hidden>
@@ -1137,6 +1146,14 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
       var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
       if(Date.now()-st<800&&Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5){$(dx<0?'next':'prev').click()}
     },{passive:true});
+  })();
+  /* Zurück-nach-oben-Knopf: erscheint nach etwas Scrollen */
+  (function(){
+    var b=$('toTop');
+    function upd(){var hide=(window.scrollY||document.documentElement.scrollTop)<500;if(b.hidden!==hide)b.hidden=hide}
+    window.addEventListener('scroll',upd,{passive:true});
+    b.onclick=function(){try{window.scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo(0,0)}};
+    upd();
   })();
   document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeEvent();$('pModal').hidden=true;$('oModal').hidden=true;$('rModal').hidden=true;$('aModal').hidden=true}});
 
