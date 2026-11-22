@@ -91,6 +91,7 @@ function cleanEvent(e) {
     remind: hasRemind ? Number(e.remind) : undefined,
     remindWa: hasRemind && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
     repeat, until,
+    skip: repeat && Array.isArray(e.skip) ? (() => { const a = [...new Set(e.skip.filter((x) => DATE_RE.test(x || '')))].sort().slice(0, 100); return a.length ? a : undefined; })() : undefined,
     place: str(e.place, 80).replace(/[\r\n\t]+/g, ' ').trim() || undefined,
   };
 }
@@ -181,7 +182,8 @@ function occDates(e, from, to) {
     const ok = days >= 0 && (e.repeat === 'd' || (e.repeat === 'w' && days % 7 === 0) || (e.repeat === '2w' && days % 14 === 0) ||
       (e.repeat === 'm' && d.getUTCDate() === a.getUTCDate()) ||
       (e.repeat === 'y' && d.getUTCDate() === a.getUTCDate() && d.getUTCMonth() === a.getUTCMonth()));
-    if (ok) out.push(d.toISOString().slice(0, 10));
+    const day = d.toISOString().slice(0, 10);
+    if (ok && !(e.skip && e.skip.includes(day))) out.push(day);
   }
   return out;
 }
@@ -289,6 +291,7 @@ function buildIcs(state) {
     if (e.repeat) {
       const freq = { d: 'FREQ=DAILY', w: 'FREQ=WEEKLY', '2w': 'FREQ=WEEKLY;INTERVAL=2', m: 'FREQ=MONTHLY', y: 'FREQ=YEARLY' }[e.repeat];
       L.push('RRULE:' + freq + (e.until ? ';UNTIL=' + d8(e.until) + (e.time ? 'T235959' : '') : ''));
+      (e.skip || []).forEach((x) => L.push(e.time ? 'EXDATE:' + d8(x) + 'T' + e.time.replace(':', '') + '00' : 'EXDATE;VALUE=DATE:' + d8(x)));
     }
     if (e.place) L.push('LOCATION:' + icsEsc(e.place));
     L.push('SUMMARY:' + icsEsc(who + ': ' + e.title), 'CATEGORIES:' + icsEsc(e.cat || 'Termin'));
