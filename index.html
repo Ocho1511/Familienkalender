@@ -324,11 +324,12 @@ body:has(.modal:not([hidden])) .totop{display:none}
       <label for="fEnd">Bis (optional) <input id="fEnd" type="date"></label>
     </div>
     <label for="fTime">Uhrzeit (optional) <input id="fTime" type="time"></label>
+    <label class="chk" for="fYearly"><input type="checkbox" id="fYearly"> Jedes Jahr wiederholen (z. B. Geburtstag)</label>
     <div class="row">
       <label for="fRepeat">Wiederholen
         <select id="fRepeat"><option value="">Nie</option><option value="d">Täglich</option><option value="w">Jede Woche</option><option value="2w">Alle 2 Wochen</option><option value="m">Jeden Monat</option><option value="y">Jedes Jahr</option></select>
       </label>
-      <label for="fUntil" id="fUntilBox">Bis (optional) <input id="fUntil" type="date"></label>
+      <label for="fUntil" id="fUntilBox">Wiederholen bis (optional) <input id="fUntil" type="date"></label>
     </div>
     <label for="fPlace">Ort (optional) <input id="fPlace" maxlength="80" placeholder="z. B. Sporthalle Haan"></label>
     <label for="fRemind">Erinnerung aufs Handy
@@ -926,10 +927,20 @@ body:has(.modal:not([hidden])) .totop{display:none}
   }
   function extraMinutes(){return $('fRemind').value==='-1'?[]:parseDays($('fExtra').value).slice(0,5)}
   function rOn(){var v=$('fRemind').value;return (v!==''&&v!=='-1')||(v!=='-1'&&extraMinutes().length>0)}
-  $('fCat').addEventListener('change',catHint);$('fRemind').addEventListener('change',catHint);
+  $('fCat').addEventListener('change',function(){
+    catHint();
+    // Neuer Geburtstag: gleich jedes Jahr wiederholen
+    if($('fCat').value==='Geburtstag'&&!editing&&$('fRepeat').value===''){$('fRepeat').value='y';syncRepeat()}
+  });
+  $('fRemind').addEventListener('change',catHint);
+  $('fYearly').addEventListener('change',function(){
+    if(this.checked)$('fRepeat').value='y';else if($('fRepeat').value==='y')$('fRepeat').value='';
+    syncRepeat();
+  });
   function syncRepeat(){
     var on=!!$('fRepeat').value;
     $('fUntilBox').hidden=!on;
+    $('fYearly').checked=$('fRepeat').value==='y';
     $('fEnd').disabled=on;if(on)$('fEnd').value='';
   }
   $('fRepeat').addEventListener('change',syncRepeat);
