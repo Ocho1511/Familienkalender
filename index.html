@@ -1596,19 +1596,28 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var todo=kFound.filter(function(f){return f.use&&f.title.trim()&&f.date});
     if(!todo.length){$('kMsg').textContent='Es ist kein vollständiger Termin ausgewählt (Titel und Datum).';return}
     $('kSave').disabled=true;$('kMsg').textContent='Wird eingetragen …';
-    var firstDate=todo[0].date,failed=0;
-    todo.reduce(function(p,f){
+    var firstDate=todo[0].date,failed=0,saved=0,firstErr='',attDone=false;
+    todo.reduce(function(p,f,idx){
       return p.then(function(){
+        $('kMsg').textContent='Wird eingetragen … '+(idx+1)+' von '+todo.length;
         var id=uid();
-        var item={id:id,title:f.title.trim(),who:f.who||'',cat:f.category||'Termin',start:f.date,end:f.end_date&&f.end_date>f.date?f.end_date:'',time:f.time||'',place:(f.place||'').trim(),note:(f.note||'').trim(),remind:null,priv:true,createdAt:Date.now()};
-        return call({op:'put',kind:'event',item:item}).then(apply).then(function(){return kBlob?uploadAtt(id,kBlob,kName,kType).then(apply).catch(function(){failed++}):null});
+        var item={id:id,title:f.title.trim(),who:f.who||'',cat:f.category||'Termin',start:f.date,end:f.end_date&&f.end_date>f.date?f.end_date:'',time:/^\d{2}:\d{2}$/.test(f.time||'')?f.time:'',place:(f.place||'').trim(),note:(f.note||'').trim(),priv:true,createdAt:Date.now()};
+        return call({op:'put',kind:'event',item:item}).then(function(j){
+          saved++;apply(j);
+          if(!kBlob||attDone)return null;
+          attDone=true; /* Die Seite wird nur am ersten Termin abgelegt, nicht 60-mal */
+          return uploadAtt(id,kBlob,kName,kType).then(apply).catch(function(){failed++});
+        }).catch(function(e){if(!firstErr)firstErr=(e&&e.message)||'Fehler';});
       });
     },Promise.resolve()).then(function(){
+      $('kSave').disabled=false;
+      if(!saved){$('kMsg').textContent='Das Eintragen hat nicht geklappt: '+firstErr;return}
       $('kMsg').textContent='';
       selected=firstDate;var d=parse(firstDate);view=new Date(d.getFullYear(),d.getMonth(),1);
       $('kModal').hidden=true;jumpTo(firstDate,null);
-      if(failed)alert_failed(failed);
-    }).catch(function(){$('kSave').disabled=false;$('kMsg').textContent='Das Eintragen hat nicht geklappt. Bitte noch einmal versuchen.'});
+      if(saved<todo.length)setStatusMsg((todo.length-saved)+' von '+todo.length+' Terminen ließen sich nicht eintragen ('+firstErr+').');
+      else if(failed)alert_failed(failed);
+    });
   };
   function alert_failed(n){setStatusMsg(n+' Anlage(n) ließ(en) sich nicht speichern. Die Termine sind eingetragen.')}
   function setStatusMsg(t){var s=$('status');var old=s.textContent;s.textContent=t;s.className='sub state warn';setTimeout(function(){refreshStatus()},6000)}
