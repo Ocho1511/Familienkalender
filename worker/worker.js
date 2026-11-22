@@ -472,11 +472,15 @@ function lenientJson(t) {
 }
 function cleanAiEvents(list, catNames, memberNames) {
   const out = [];
+  const todayBerlin = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
   for (const e of Array.isArray(list) ? list : []) {
     if (out.length >= 60 || !e) continue;
     const title = str(e.title, 120).replace(/[\r\n\t]+/g, ' ').trim();
     const date = DATE_RE.test(e.date || '') && e.date >= '2000-01-01' && e.date <= '2100-12-31' ? e.date : '';
     if (!title || !date) continue;
+    // Termine in der Vergangenheit ignorieren (mehrtaegige gelten bis zum letzten Tag)
+    const last = DATE_RE.test(e.end_date || '') && e.end_date > date ? e.end_date : date;
+    if (last < todayBerlin) continue;
     out.push({
       title, date,
       end_date: DATE_RE.test(e.end_date || '') && e.end_date > date ? e.end_date : '',
