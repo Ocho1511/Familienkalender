@@ -449,6 +449,8 @@ body:has(.modal:not([hidden])) .totop{display:none}
     <label for="rWho">Dieses Handy gehört zu <select id="rWho"></select></label>
     <div class="actions"><button class="btn" id="rOn" type="button">Auf diesem Gerät einschalten</button></div>
     <div class="actions"><button class="btn ghost sm" id="rTest" type="button">Test senden</button><button class="btn danger sm" id="rOff" type="button">Ausschalten</button></div>
+    <label class="chk" for="rSound"><input type="checkbox" id="rSound" checked> Ton und Vibration bei Erinnerung</label>
+    <div class="sub" style="margin-top:-4px">Der Ton hängt auch von den iPhone-Einstellungen ab: Einstellungen, Mitteilungen, Familienkalender, „Töne" einschalten. Der Seitenschalter für Klingelton aus und ein Fokus-Modus machen sie stumm.</div>
     <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:2px 0">
     <p class="sub" id="wInfo" style="margin:0"></p>
     <label for="wWho">WhatsApp-Test an <select id="wWho"></select></label>
@@ -1300,6 +1302,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     ['rOn','rTest','rOff'].forEach(function(id){$(id).disabled=!can});
     if(!can)return;
     getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){
+      if(sub)call({op:'push_state',endpoint:sub.endpoint}).then(function(j){$('rSound').checked=j.sound!==false}).catch(function(){});
       info.textContent=sub?'Erinnerungen sind auf diesem Gerät eingeschaltet.':(Notification.permission==='denied'?'Mitteilungen sind für diese App blockiert. Bitte in den iPhone-Einstellungen unter Mitteilungen erlauben.':'Erinnerungen sind auf diesem Gerät aus.');
     }).catch(function(){info.textContent='Der Status ist gerade nicht abrufbar.'});
   }
@@ -1320,10 +1323,17 @@ body:has(.modal:not([hidden])) .totop{display:none}
       return getReg();
     }).then(function(reg){
       return reg.pushManager.getSubscription().then(function(sub){return sub||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(VAPID_PUBLIC)})});
-    }).then(function(sub){return call({op:'push_sub',sub:{endpoint:sub.endpoint},memberId:who})})
+    }).then(function(sub){return call({op:'push_sub',sub:{endpoint:sub.endpoint},memberId:who,sound:$('rSound').checked})})
       .then(function(){rmsg('Erinnerungen sind eingeschaltet. Mit „Test senden" kannst du es prüfen.');refreshRemind()})
       .catch(function(e){if(e!==0)rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
   };
+  $('rSound').addEventListener('change',function(){
+    var on=this.checked;
+    getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){
+      if(!sub){rmsg(on?'Der Ton gilt, sobald die Erinnerungen auf diesem Gerät eingeschaltet sind.':'Der Ton ist aus, sobald die Erinnerungen eingeschaltet sind.');return}
+      return call({op:'push_sound',endpoint:sub.endpoint,sound:on}).then(function(){rmsg(on?'Ton und Vibration sind an.':'Erinnerungen kommen jetzt stumm.')});
+    }).catch(function(e){rmsg('Das hat nicht geklappt: '+(e&&e.message?e.message:'Fehler'))});
+  });
   $('rTest').onclick=function(){
     rmsg('Wird gesendet …');
     getReg().then(function(reg){return reg.pushManager.getSubscription()}).then(function(sub){

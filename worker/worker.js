@@ -278,7 +278,7 @@ async function runReminders(env) {
   const sentKeys = [];
   const waQueue = [];
   const chQueue = [];
-  const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
+  const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push({ ...msg, silent: subs[h].sound === false }); });
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
   const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 62 * 86400000);
@@ -529,9 +529,22 @@ export default {
       const subs = (await env.KV.get('subs', 'json')) || {};
       const h = await sha256hex(ep);
       if (!subs[h] && Object.keys(subs).length >= 40) return reply({ error: 'Limit erreicht' }, 413, c);
-      subs[h] = { endpoint: ep, memberId: mid };
+      subs[h] = { endpoint: ep, memberId: mid, sound: body.sound === undefined ? !(subs[h] && subs[h].sound === false) : body.sound !== false };
       await env.KV.put('subs', JSON.stringify(subs));
       return reply({ ok: true, count: Object.keys(subs).length }, 200, c);
+    }
+    if (body.op === 'push_state') {
+      const subs = (await env.KV.get('subs', 'json')) || {};
+      const sub = subs[await sha256hex(String(body.endpoint || ''))];
+      return reply({ subscribed: !!sub, sound: sub ? sub.sound !== false : true, memberId: sub ? sub.memberId : '' }, 200, c);
+    }
+    if (body.op === 'push_sound') {
+      const subs = (await env.KV.get('subs', 'json')) || {};
+      const h = await sha256hex(String(body.endpoint || ''));
+      if (!subs[h]) return reply({ error: 'Dieses Geraet ist nicht angemeldet' }, 404, c);
+      subs[h].sound = body.sound !== false;
+      await env.KV.put('subs', JSON.stringify(subs));
+      return reply({ ok: true, sound: subs[h].sound }, 200, c);
     }
     if (body.op === 'push_unsub') {
       const subs = (await env.KV.get('subs', 'json')) || {};
@@ -545,7 +558,7 @@ export default {
       const ep = String(body.endpoint || '');
       const h = await sha256hex(ep);
       if (!subs[h]) return reply({ error: 'Dieses Geraet ist nicht angemeldet' }, 404, c);
-      const st = await sendPush(env, h, ep, [{ title: 'Familienkalender', body: 'So sehen Erinnerungen aus.' }]).catch((e) => 'Fehler: ' + (e && e.message ? e.message : e));
+      const st = await sendPush(env, h, ep, [{ title: 'Familienkalender', body: 'So sehen Erinnerungen aus.', silent: subs[h].sound === false }]).catch((e) => 'Fehler: ' + (e && e.message ? e.message : e));
       if (st === 404 || st === 410) { delete subs[h]; await env.KV.put('subs', JSON.stringify(subs)); }
       return reply({ status: st }, 200, c);
     }

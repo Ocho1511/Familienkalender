@@ -25,6 +25,9 @@ self.addEventListener('push', (event) => {
       await self.registration.showNotification(String(it.title || 'Familienkalender'), {
         body: String(it.body || ''),
         icon: 'icons/icon-192.png',
+        silent: !!it.silent,                              // Ton: an, sofern das Geraet ihn nicht abgestellt hat
+        vibrate: it.silent ? undefined : [200, 100, 200, 100, 200],
+        requireInteraction: !it.silent,                   // bleibt stehen, wo das System es zulaesst
         data: { url: './' },
       });
     }
