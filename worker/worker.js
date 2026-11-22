@@ -10,7 +10,7 @@ const DEFAULT_ORIGINS = ['https://ocho1511.github.io'];
 const MAX_EVENTS = 5000;
 const MAX_MEMBERS = 30;
 const ID_RE = /^[A-Za-z0-9_-]{4,40}$/;
-const DEFAULT_CATS = ['Aktivität', 'Schule', 'Klassenarbeit', 'Urlaub', 'Arzt', 'Geburtstag', 'Termin', 'Sonstiges'].map((name) => ({ name }));
+const DEFAULT_CATS = ['Aktivität', 'Sportveranstaltung', 'Schule', 'Klassenarbeit', 'Urlaub', 'Arzt', 'Geburtstag', 'Termin', 'Sonstiges'].map((name) => ({ name }));
 // Arten mit Regel: Erinnerung x Minuten vorher (0 bis 30 Tage) ueber ausgewaehlte Kanaele
 function cleanCats(list) {
   const out = [], seen = new Set();

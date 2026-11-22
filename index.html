@@ -472,7 +472,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
   var SHORT=new Intl.DateTimeFormat('de-DE',{weekday:'short',day:'numeric',month:'short'});
   var $=function(id){return document.getElementById(id)};
 
-  var DEFAULT_CATS=['Aktivität','Schule','Klassenarbeit','Urlaub','Arzt','Geburtstag','Termin','Sonstiges'].map(function(n){return {name:n}});
+  var DEFAULT_CATS=['Aktivität','Sportveranstaltung','Schule','Klassenarbeit','Urlaub','Arzt','Geburtstag','Termin','Sonstiges'].map(function(n){return {name:n}});
   var cats=DEFAULT_CATS;
   var members=[], events=[], sel={}, pass='', loaded=false, offline=false;
   var today=iso(new Date());
