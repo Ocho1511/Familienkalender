@@ -10,7 +10,28 @@ const DEFAULT_ORIGINS = ['https://ocho1511.github.io'];
 const MAX_EVENTS = 5000;
 const MAX_MEMBERS = 30;
 const ID_RE = /^[A-Za-z0-9_-]{4,40}$/;
-const CATS = ['Aktivität', 'Klassenarbeit', 'Urlaub', 'Arzt', 'Geburtstag', 'Termin', 'Sonstiges'];
+const DEFAULT_CATS = ['Aktivität', 'Schule', 'Klassenarbeit', 'Urlaub', 'Arzt', 'Geburtstag', 'Termin', 'Sonstiges'].map((name) => ({ name }));
+// Arten mit Regel: Erinnerung x Minuten vorher (0 bis 30 Tage) ueber ausgewaehlte Kanaele
+function cleanCats(list) {
+  const out = [], seen = new Set();
+  (Array.isArray(list) ? list : []).forEach((c) => {
+    if (!c || out.length >= 20) return;
+    const name = str(c.name, 30).replace(/[\r\n\t]+/g, ' ').trim();
+    if (!name || seen.has(name.toLowerCase())) return;
+    seen.add(name.toLowerCase());
+    const r = Number(c.remind);
+    const hasRule = c.remind !== null && c.remind !== undefined && c.remind !== '' && Number.isInteger(r) && r >= 0 && r <= 43200;
+    const item = { name };
+    if (hasRule) {
+      item.remind = r;
+      item.push = c.push !== false;
+      ['wa', 'sms', 'mail', 'call'].forEach((k) => { if (c[k] === true) item[k] = true; });
+    }
+    out.push(item);
+  });
+  return out;
+}
+const snap = (st) => ({ members: st.members, events: st.events, cats: st.cats && st.cats.length ? st.cats : DEFAULT_CATS });
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -51,7 +72,7 @@ async function addFail(env, ip) {
   await env.KV.put('fail:' + ip, String(n), { expirationTtl: 3600 });
 }
 
-const REMINDS = [0, 15, 30, 60, 120, 1440, 2880];
+const REMINDS = [-1, 0, 15, 30, 60, 120, 1440, 2880, 4320, 7200, 10080]; // -1 = bewusst keine Erinnerung
 const REPEATS = ['d', 'w', '2w', 'm', 'y'];
 function cleanMember(m) {
   if (!m || !ID_RE.test(m.id || '')) return null;
@@ -83,16 +104,17 @@ function cleanEvent(e) {
   const end = !repeat && DATE_RE.test(e.end || '') && e.end >= e.start ? e.end : '';
   const until = repeat && DATE_RE.test(e.until || '') && e.until >= e.start ? e.until : undefined;
   const hasRemind = e.remind !== null && e.remind !== undefined && e.remind !== '' && REMINDS.includes(Number(e.remind));
+  const real = hasRemind && Number(e.remind) >= 0;
   return {
     id: e.id, title, who: ID_RE.test(e.who || '') ? e.who : '',
-    cat: CATS.includes(e.cat) ? e.cat : 'Termin',
+    cat: str(e.cat, 30).replace(/[\r\n\t]+/g, ' ').trim() || 'Termin',
     start: e.start, end, time: TIME_RE.test(e.time || '') ? e.time : '',
     note: str(e.note, 500).trim(), createdAt: Number(e.createdAt) || Date.now(),
     remind: hasRemind ? Number(e.remind) : undefined,
-    remindWa: hasRemind && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
-    remindSms: hasRemind && e.remindSms === true ? true : undefined,
-    remindMail: hasRemind && e.remindMail === true ? true : undefined,
-    remindCall: hasRemind && e.remindCall === true ? true : undefined,
+    remindWa: real && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
+    remindSms: real && e.remindSms === true ? true : undefined,
+    remindMail: real && e.remindMail === true ? true : undefined,
+    remindCall: real && e.remindCall === true ? true : undefined,
     repeat, until,
     skip: repeat && Array.isArray(e.skip) ? (() => { const a = [...new Set(e.skip.filter((x) => DATE_RE.test(x || '')))].sort().slice(0, 100); return a.length ? a : undefined; })() : undefined,
     place: str(e.place, 80).replace(/[\r\n\t]+/g, ' ').trim() || undefined,
@@ -145,7 +167,8 @@ function leadText(min) {
   if (min === 0) return 'jetzt';
   if (min < 60) return 'in ' + min + ' Min.';
   if (min < 1440) return 'in ' + min / 60 + ' Std.';
-  return 'in ' + min / 1440 + (min >= 2880 ? ' Tagen' : ' Tag');
+  const d = Math.round(min / 1440);
+  return 'in ' + d + (d >= 2 ? ' Tagen' : ' Tag');
 }
 // ---- WhatsApp (offizielle Cloud API von Meta, Vorlagen-Nachricht) ----
 function waConfigured(env) { return !!(env.WA_TOKEN && env.WA_PHONE_ID && env.WA_TEMPLATE); }
@@ -257,25 +280,35 @@ async function runReminders(env) {
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
   const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 4 * 86400000);
+  const catRules = {};
+  (state.cats || []).forEach((c) => { catRules[c.name] = c; });
   for (const e of state.events || []) {
-    if (e.remind === undefined || e.remind === null) continue;
+    // eigene Einstellung des Termins hat Vorrang, sonst gilt die Regel der Art
+    let eff = null;
+    if (e.remind !== undefined && e.remind !== null) {
+      if (e.remind >= 0) eff = { remind: e.remind, push: true, wa: !!e.remindWa, sms: !!e.remindSms, mail: !!e.remindMail, call: !!e.remindCall };
+    } else {
+      const rule = catRules[e.cat];
+      if (rule && rule.remind !== undefined) eff = { remind: rule.remind, push: rule.push !== false, wa: !!rule.wa, sms: !!rule.sms, mail: !!rule.mail, call: !!rule.call };
+    }
+    if (!eff) continue;
     const dates = e.repeat ? occDates(e, fromDay, toDay) : [e.start];
     for (const date of dates) {
-      const t = berlinToUtc(date, e.time || '09:00') - e.remind * 60000;
+      const t = berlinToUtc(date, e.time || '09:00') - eff.remind * 60000;
       if (!(t > last && t <= now)) continue;
       const dk = 'sent:' + e.id + ':' + t;
       if (await env.KV.get(dk)) continue;
       sentKeys.push(dk);
       const who = e.who && names[e.who] ? names[e.who] : 'Alle';
-      add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) + (e.place ? ' · ' + e.place : '') });
+      if (eff.push) add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(eff.remind) + (e.place ? ' · ' + e.place : '') });
       const rec2 = (state.members || []).filter((m) => !e.who || m.id === e.who);
-      const vars = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: leadText(e.remind) };
-      if (e.remindSms && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'sms', m, v: vars }));
-      if (e.remindCall && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'call', m, v: vars }));
-      if (e.remindMail && mailConfigured(env)) rec2.filter((m) => m.email).forEach((m) => chQueue.push({ ch: 'mail', m, v: vars }));
-      if (e.remindWa && waConfigured(env)) {
+      const vars = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: leadText(eff.remind) };
+      if (eff.sms && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'sms', m, v: vars }));
+      if (eff.call && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'call', m, v: vars }));
+      if (eff.mail && mailConfigured(env)) rec2.filter((m) => m.email).forEach((m) => chQueue.push({ ch: 'mail', m, v: vars }));
+      if (eff.wa && waConfigured(env)) {
         const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
-        rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(date) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(e.remind) + ')', who] }));
+        rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(date) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(eff.remind) + ')', who] }));
       }
     }
   }
@@ -474,11 +507,17 @@ export default {
       if (!env.ICS_TOKEN) return reply({ error: 'Outlook-Link nicht eingerichtet' }, 500, c);
       return reply({ url: url.origin + '/ics?t=' + String(env.ICS_TOKEN).trim() }, 200, c);
     }
+    if (body.op === 'cats_put') {
+      const cl = cleanCats(body.cats);
+      if (cl.length) state.cats = cl; else delete state.cats;
+      await env.KV.put('state', JSON.stringify(state));
+      return reply(snap(state), 200, c);
+    }
     if (body.op === 'reorder') {
       const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
       state.members.forEach((m) => { const i = ids.indexOf(m.id); if (i >= 0) m.order = i; });
       await env.KV.put('state', JSON.stringify(state));
-      return reply({ members: state.members, events: state.events }, 200, c);
+      return reply(snap(state), 200, c);
     }
     if (body.op === 'photo_get') {
       return reply({ photo: (await env.KV.get('photo')) || null }, 200, c);
@@ -506,7 +545,7 @@ export default {
       await env.KV.delete('photo');
       return reply({ photo: null }, 200, c);
     }
-    if (body.op === 'pull') return reply({ members: state.members, events: state.events }, 200, c);
+    if (body.op === 'pull') return reply(snap(state), 200, c);
 
     if (body.op === 'put' || body.op === 'del') {
       const isMember = body.kind === 'member';
@@ -527,7 +566,7 @@ export default {
         if (i >= 0) list.splice(i, 1);
       }
       await env.KV.put('state', JSON.stringify(state));
-      return reply({ members: state.members, events: state.events }, 200, c);
+      return reply(snap(state), 200, c);
     }
     return reply({ error: 'op?' }, 400, c);
   },
