@@ -52,6 +52,7 @@ async function addFail(env, ip) {
 }
 
 const REMINDS = [0, 15, 30, 60, 120, 1440, 2880];
+const REPEATS = ['d', 'w', '2w', 'm', 'y'];
 function cleanMember(m) {
   if (!m || !ID_RE.test(m.id || '')) return null;
   const name = str(m.name, 40).trim();
@@ -78,7 +79,9 @@ function cleanEvent(e) {
   if (!e || !ID_RE.test(e.id || '')) return null;
   const title = str(e.title, 120).trim();
   if (!title || !DATE_RE.test(e.start || '')) return null;
-  const end = DATE_RE.test(e.end || '') && e.end >= e.start ? e.end : '';
+  const repeat = REPEATS.includes(e.repeat) ? e.repeat : undefined;
+  const end = !repeat && DATE_RE.test(e.end || '') && e.end >= e.start ? e.end : '';
+  const until = repeat && DATE_RE.test(e.until || '') && e.until >= e.start ? e.until : undefined;
   const hasRemind = e.remind !== null && e.remind !== undefined && e.remind !== '' && REMINDS.includes(Number(e.remind));
   return {
     id: e.id, title, who: ID_RE.test(e.who || '') ? e.who : '',
@@ -87,6 +90,8 @@ function cleanEvent(e) {
     note: str(e.note, 500).trim(), createdAt: Number(e.createdAt) || Date.now(),
     remind: hasRemind ? Number(e.remind) : undefined,
     remindWa: hasRemind && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
+    repeat, until,
+    place: str(e.place, 80).replace(/[\r\n\t]+/g, ' ').trim() || undefined,
   };
 }
 
@@ -165,6 +170,21 @@ async function waSend(env, to, params) {
   try { const j = await r.json(); detail = (j && j.error && j.error.message) || ''; } catch (e) { /* kein JSON */ }
   return { ok: r.ok, status: r.status, detail };
 }
+// Termine einer Wiederholung zwischen zwei Tagen (ISO, inklusive)
+function occDates(e, from, to) {
+  const out = [];
+  const a = new Date(e.start + 'T00:00:00Z');
+  let d = new Date((from > e.start ? from : e.start) + 'T00:00:00Z');
+  const end = new Date(((e.until && e.until < to) ? e.until : to) + 'T00:00:00Z');
+  for (; d <= end; d = new Date(d.getTime() + 86400000)) {
+    const days = Math.round((d - a) / 86400000);
+    const ok = days >= 0 && (e.repeat === 'd' || (e.repeat === 'w' && days % 7 === 0) || (e.repeat === '2w' && days % 14 === 0) ||
+      (e.repeat === 'm' && d.getUTCDate() === a.getUTCDate()) ||
+      (e.repeat === 'y' && d.getUTCDate() === a.getUTCDate() && d.getUTCMonth() === a.getUTCMonth()));
+    if (ok) out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
 const deDate = (s) => s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4);
 
 async function runReminders(env) {
@@ -181,18 +201,23 @@ async function runReminders(env) {
   const waQueue = [];
   const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push(msg); });
 
+  const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 4 * 86400000);
   for (const e of state.events || []) {
     if (e.remind === undefined || e.remind === null) continue;
-    const t = berlinToUtc(e.start, e.time || '09:00') - e.remind * 60000;
-    if (!(t > last && t <= now)) continue;
-    const dk = 'sent:' + e.id + ':' + t;
-    if (await env.KV.get(dk)) continue;
-    sentKeys.push(dk);
-    const who = e.who && names[e.who] ? names[e.who] : 'Alle';
-    add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) });
-    if (e.remindWa && waConfigured(env)) {
-      const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
-      rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(e.start) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(e.remind) + ')', who] }));
+    const dates = e.repeat ? occDates(e, fromDay, toDay) : [e.start];
+    for (const date of dates) {
+      const t = berlinToUtc(date, e.time || '09:00') - e.remind * 60000;
+      if (!(t > last && t <= now)) continue;
+      const dk = 'sent:' + e.id + ':' + t;
+      if (await env.KV.get(dk)) continue;
+      sentKeys.push(dk);
+      const who = e.who && names[e.who] ? names[e.who] : 'Alle';
+      add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(e.remind) + (e.place ? ' · ' + e.place : '') });
+      if (e.remindWa && waConfigured(env)) {
+        const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
+        rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(date) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(e.remind) + ')', who] }));
+      }
     }
   }
   const year = new Date(now + 3600000).getUTCFullYear();
@@ -261,6 +286,11 @@ function buildIcs(state) {
     } else {
       L.push('DTSTART;VALUE=DATE:' + d8(e.start), 'DTEND;VALUE=DATE:' + d8(nextDay(end)));
     }
+    if (e.repeat) {
+      const freq = { d: 'FREQ=DAILY', w: 'FREQ=WEEKLY', '2w': 'FREQ=WEEKLY;INTERVAL=2', m: 'FREQ=MONTHLY', y: 'FREQ=YEARLY' }[e.repeat];
+      L.push('RRULE:' + freq + (e.until ? ';UNTIL=' + d8(e.until) + (e.time ? 'T235959' : '') : ''));
+    }
+    if (e.place) L.push('LOCATION:' + icsEsc(e.place));
     L.push('SUMMARY:' + icsEsc(who + ': ' + e.title), 'CATEGORIES:' + icsEsc(e.cat || 'Termin'));
     if (e.note) L.push('DESCRIPTION:' + icsEsc(e.note));
     L.push('END:VEVENT');

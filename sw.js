@@ -39,3 +39,15 @@ self.addEventListener('notificationclick', (event) => {
     return self.clients.openWindow('./');
   })());
 });
+
+// Offline-Start: erst das Netz, bei Ausfall die zuletzt geladene Kopie der Seite und ihrer Dateien
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  event.respondWith(
+    fetch(req).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open('fk-v1').then((c) => c.put(req, copy)); }
+      return res;
+    }).catch(() => caches.match(req).then((m) => m || caches.match('./')))
+  );
+});
