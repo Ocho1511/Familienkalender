@@ -465,15 +465,15 @@ function lenientJson(t) {
     const ch = t[i];
     if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
     if (ch === '"') inStr = true;
-    else if (ch === '{') { if (depth++ === 0) start = i; }
-    else if (ch === '}' && --depth === 0 && start >= 0) { try { evs.push(JSON.parse(t.slice(start, i + 1))); } catch (e) { /* ueberspringen */ } start = -1; }
+    else if (ch === '{' || ch === '[') { if (depth++ === 0) start = i; }
+    else if ((ch === '}' || ch === ']') && --depth === 0 && start >= 0) { try { evs.push(JSON.parse(t.slice(start, i + 1))); } catch (e) { /* ueberspringen */ } start = -1; }
   }
   return evs.length || sm ? { summary: sm ? sm[1] : '', events: evs } : null;
 }
 function cleanAiEvents(list, catNames, memberNames) {
   const out = [];
   for (const e of Array.isArray(list) ? list : []) {
-    if (out.length >= 20 || !e) continue;
+    if (out.length >= 60 || !e) continue;
     const title = str(e.title, 120).replace(/[\r\n\t]+/g, ' ').trim();
     const date = DATE_RE.test(e.date || '') && e.date >= '2000-01-01' && e.date <= '2100-12-31' ? e.date : '';
     if (!title || !date) continue;
@@ -509,7 +509,7 @@ async function aiExtract(env, state, body) {
     : { type: 'image', source: { type: 'base64', media_type: type, data } };
   const params = {
     model: AI_MODEL,
-    max_tokens: 6000,
+    max_tokens: 16000,
     system: aiSystem(today, weekday, catNames, memberNames),
     messages: [{ role: 'user', content: [block, { type: 'text', text: 'Lies die Seite und gib alle Termine als JSON zurück.' }] }],
     output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
@@ -517,15 +517,29 @@ async function aiExtract(env, state, body) {
   if (!env.ANTHROPIC_API_KEY) {
     // Weg ueber den gemeinsamen Proxy: kein Structured Output, daher JSON im Prompt verlangen
     try {
-      const pp = { model: AI_MODEL, max_tokens: 4096, system: params.system + ' Antworte ausschliesslich mit einem JSON-Objekt der Form {"summary": string, "events": [{"title","date","end_date","time","place","category","person","note"}]} ohne Text davor oder danach. Nicht vorhandene Angaben sind null.', messages: params.messages };
-      const r = await fetch(AI_PROXY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pp), signal: AbortSignal.timeout(90000) });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j) return { ok: false, error: r.status === 429 ? 'Gerade zu viele Anfragen. Bitte in einer Minute noch einmal.' : 'Fehler bei der KI (Status ' + r.status + ').' };
-      if (j.stop_reason === 'refusal') return { ok: false, error: 'Die KI hat diese Seite nicht ausgewertet.' };
-      const t = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-      const parsed = lenientJson(t);
-      if (!parsed) return { ok: false, error: 'Die Antwort der KI war nicht lesbar (' + (j.stop_reason || 'unbekannt') + ', ' + t.length + ' Zeichen). Bitte noch einmal versuchen oder eine einzelne Seite scannen.' };
-      return { ok: true, summary: str(parsed.summary, 300), events: cleanAiEvents(parsed.events, catNames, memberNames) };
+      const sysP = params.system + ' Gib die Termine kompakt als JSON aus, ohne Leerzeichen und Zeilenumbrueche: {"summary":"...","events":[[title,date,end_date,time,place,category,person,note],...]} (jeder Termin ein Array in genau dieser Reihenfolge, nicht vorhandene Angaben null, Notizen hoechstens 80 Zeichen). Kein Text davor oder danach.';
+      let all = [], summary = '', truncated = false;
+      for (let round = 0; round < 4; round++) {
+        const msgs = JSON.parse(JSON.stringify(params.messages));
+        if (all.length) {
+          msgs[0].content.push({ type: 'text', text: 'Diese Termine sind schon erfasst, nenne sie NICHT noch einmal, sondern nur die weiteren Termine der Seite (leere Liste, wenn es keine mehr gibt): ' + all.map((e) => e.date + ' ' + e.title).join('; ') });
+        }
+        const r = await fetch(AI_PROXY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 8000, system: sysP, messages: msgs }), signal: AbortSignal.timeout(90000) });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j) { if (all.length) { truncated = true; break; } return { ok: false, error: r.status === 429 ? 'Gerade zu viele Anfragen. Bitte in einer Minute noch einmal.' : 'Fehler bei der KI (Status ' + r.status + ').' }; }
+        if (j.stop_reason === 'refusal') { if (all.length) break; return { ok: false, error: 'Die KI hat diese Seite nicht ausgewertet.' }; }
+        const t = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+        const parsed = lenientJson(t);
+        if (!parsed) { if (all.length) { truncated = true; break; } return { ok: false, error: 'Die Antwort der KI war nicht lesbar (' + (j.stop_reason || 'unbekannt') + ', ' + t.length + ' Zeichen). Bitte noch einmal versuchen oder eine einzelne Seite scannen.' }; }
+        if (!summary) summary = str(parsed.summary, 300);
+        const got = (Array.isArray(parsed.events) ? parsed.events : []).map((e) => Array.isArray(e) ? { title: e[0], date: e[1], end_date: e[2], time: e[3], place: e[4], category: e[5], person: e[6], note: e[7] } : e).filter((e) => e && e.title && e.date);
+        const seen = new Set(all.map((e) => e.date + '|' + String(e.title).toLowerCase()));
+        const fresh = got.filter((e) => !seen.has(e.date + '|' + String(e.title).toLowerCase()));
+        all = all.concat(fresh);
+        if (j.stop_reason !== 'max_tokens' || !fresh.length) break;
+        if (round === 3) truncated = true;
+      }
+      return { ok: true, truncated, summary, events: cleanAiEvents(all, catNames, memberNames) };
     } catch (e) { return { ok: false, error: 'Die KI ist gerade nicht erreichbar.' }; }
   }
   const client = new Anthropic({ apiKey: String(env.ANTHROPIC_API_KEY).trim(), maxRetries: 1, timeout: 90000 });
@@ -542,7 +556,7 @@ async function aiExtract(env, state, body) {
     const text = (msg.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
     let parsed;
     try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: 'Die Antwort der KI war nicht lesbar. Bitte noch einmal versuchen.' }; }
-    return { ok: true, summary: str(parsed.summary, 300), events: cleanAiEvents(parsed.events, catNames, memberNames) };
+    return { ok: true, truncated: msg.stop_reason === 'max_tokens', summary: str(parsed.summary, 300), events: cleanAiEvents(parsed.events, catNames, memberNames) };
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) return { ok: false, error: 'Der API-Schluessel wurde abgelehnt. Bitte pruefen.' };
     if (e instanceof Anthropic.RateLimitError) return { ok: false, error: 'Gerade zu viele Anfragen. Bitte in einer Minute noch einmal.' };

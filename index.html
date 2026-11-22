@@ -1526,7 +1526,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     }).then(function(j){
       ['kScan','kPhoto'].forEach(function(id){$(id).disabled=false});
       if(!j.ok){$('kStatus').textContent='';$('kMsg').textContent=j.error||'Das Auslesen hat nicht geklappt.';return}
-      $('kStatus').textContent=j.summary||'';
+      $('kStatus').textContent=(j.summary||'')+(j.truncated?' Achtung: Die Seite hat so viele Termine, dass die Liste unvollständig sein kann. Scanne sie zur Sicherheit noch einmal in Teilen.':'');
       if(!j.events.length){$('kMsg').textContent='Auf dieser Seite wurden keine Termine gefunden.';return}
       kFound=j.events.map(function(e){
         var m=memberByName(e.person);
