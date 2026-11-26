@@ -122,6 +122,7 @@ function cleanEvent(e) {
     id: e.id, title, who: ID_RE.test(e.who || '') ? e.who : '',
     cat: str(e.cat, 30).replace(/[\r\n\t]+/g, ' ').trim() || 'Termin',
     start: e.start, end, time: TIME_RE.test(e.time || '') ? e.time : '',
+    timeEnd: TIME_RE.test(e.time || '') && TIME_RE.test(e.timeEnd || '') && e.timeEnd !== e.time ? e.timeEnd : undefined,
     note: str(e.note, 500).trim(), createdAt: Number(e.createdAt) || Date.now(),
     remind: hasRemind ? Number(e.remind) : undefined,
     remindWa: real && (e.remindWa === true || e.remindWa === 'true') ? true : undefined,
@@ -457,7 +458,7 @@ function icsToEvents(text, today) {
     const en = c.DTEND ? parseDt(c.DTEND.val, c.DTEND.params) : null;
     let end = '';
     if (en) { if (!st.time) { const ex = prevDay(en.date); end = ex > st.date ? ex : ''; } else end = en.date > st.date ? en.date : ''; }
-    const ev = { uid, title: icsUnesc(c.SUMMARY && c.SUMMARY.val) || 'Privater Termin', start: st.date, end, time: st.time, place: icsUnesc(c.LOCATION && c.LOCATION.val) };
+    const ev = { uid, title: icsUnesc(c.SUMMARY && c.SUMMARY.val) || 'Privater Termin', start: st.date, end, time: st.time, timeEnd: st.time && en && en.time ? en.time : '', place: icsUnesc(c.LOCATION && c.LOCATION.val) };
     if (c.RRULE) {
       const r = {};
       c.RRULE.val.split(';').forEach((x) => { const k = x.indexOf('='); if (k > 0) r[x.slice(0, k)] = x.slice(k + 1); });
@@ -503,7 +504,7 @@ async function syncOutlook(env) {
     keep.add(id);
     const i = state.events.findIndex((x) => x.id === id);
     const old = i >= 0 ? state.events[i] : null;
-    const item = cleanEvent({ ...(old || {}), id, title: ev.title, who, cat: old ? old.cat : 'Termin', start: ev.start, end: ev.end, time: ev.time, place: ev.place || undefined, repeat: ev.repeat, until: ev.until, skip: ev.skip, priv: true, createdAt: old ? old.createdAt : Date.now() });
+    const item = cleanEvent({ ...(old || {}), id, title: ev.title, who, cat: old ? old.cat : 'Termin', start: ev.start, end: ev.end, time: ev.time, timeEnd: ev.timeEnd || undefined, place: ev.place || undefined, repeat: ev.repeat, until: ev.until, skip: ev.skip, priv: true, createdAt: old ? old.createdAt : Date.now() });
     if (!item) continue;
     item.src = 'outlook';
     if (old && old.att) item.att = old.att;
@@ -562,8 +563,9 @@ function buildIcs(state, onlyPriv) {
     if (e.time) {
       const t = e.time.replace(':', '') + '00';
       const [h, m] = e.time.split(':').map(Number);
-      const endT = e.end && e.end > e.start ? e.time.replace(':', '') + '00' : String((h + 1) % 24).padStart(2, '0') + String(m).padStart(2, '0') + '00';
-      const endDate = e.end && e.end > e.start ? e.end : (h + 1 >= 24 ? nextDay(e.start) : e.start);
+      const multi = e.end && e.end > e.start;
+      const endT = e.timeEnd ? e.timeEnd.replace(':', '') + '00' : multi ? e.time.replace(':', '') + '00' : String((h + 1) % 24).padStart(2, '0') + String(m).padStart(2, '0') + '00';
+      const endDate = multi ? e.end : (e.timeEnd ? (e.timeEnd <= e.time ? nextDay(e.start) : e.start) : (h + 1 >= 24 ? nextDay(e.start) : e.start));
       L.push('DTSTART:' + d8(e.start) + 'T' + t, 'DTEND:' + d8(endDate) + 'T' + endT);
     } else {
       L.push('DTSTART;VALUE=DATE:' + d8(e.start), 'DTEND;VALUE=DATE:' + d8(nextDay(end)));

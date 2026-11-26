@@ -336,6 +336,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       <label for="fEnd">Bis (optional) <input id="fEnd" type="date"></label>
     </div>
     <label for="fTime">Uhrzeit (optional) <input id="fTime" type="time"></label>
+    <label for="fTimeEnd">Uhrzeit bis (optional) <input id="fTimeEnd" type="time"></label>
     <label class="chk" for="fYearly"><input type="checkbox" id="fYearly"> Jedes Jahr am gleichen Datum wiederholen (z. B. Geburtstag)</label>
     <div class="row">
       <label for="fRepeat">Wiederholen
@@ -534,6 +535,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
   function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
   function parse(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2])}
   function uid(){var a=new Uint8Array(12);try{crypto.getRandomValues(a)}catch(e){for(var i=0;i<12;i++)a[i]=Math.floor(Math.random()*256)}return Array.prototype.map.call(a,function(x){return (x%36).toString(36)}).join('')}
+  function tspan(e){return e.time+(e.timeEnd&&e.timeEnd!==e.time?'–'+e.timeEnd:'')}
   function memberOf(id){for(var i=0;i<members.length;i++)if(members[i].id===id)return members[i];return null}
   function colorOf(ev){var m=memberOf(ev.who);return m?m.color:'#7d8a82'}
   function nameOf(ev){var m=memberOf(ev.who);return m?m.name:'Alle'}
@@ -801,7 +803,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       var box=el('div','wev');
       if(!evs.length)box.appendChild(el('span','empty','–'));
       evs.forEach(function(e){
-        var b=el('button',null,(e.time?e.time+' ':'')+e.title+(e.holiday?'':' · '+nameOf(e)));b.type='button';b.style.setProperty('--c',colorOf(e));
+        var b=el('button',null,(e.time?tspan(e)+' ':'')+e.title+(e.holiday?'':' · '+nameOf(e)));b.type='button';b.style.setProperty('--c',colorOf(e));
         b.onclick=function(){jumpTo(key,e.id)};box.appendChild(b);
       });
       row.appendChild(box);
@@ -849,7 +851,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       var evs=eventsOn(key),dots=el('div','dots');
       if(evs.some(function(x){return x.cat==='Feiertag'}))c.classList.add('feiertag');else if(evs.some(function(x){return x.cat==='Ferien'}))c.classList.add('ferien');
       var bgc=dayBg(evs);if(bgc)c.style.background=bgc;
-      evs.slice(0,3).forEach(function(e){var x=el('span','ev',(e.time?e.time+' ':'')+e.title);x.style.setProperty('--c',colorOf(e));(function(k,id){x.onclick=function(ev){ev.stopPropagation();jumpTo(k,id)}})(key,e.id);x.style.cursor='pointer';dots.appendChild(x)});
+      evs.slice(0,3).forEach(function(e){var x=el('span','ev',(e.time?tspan(e)+' ':'')+e.title);x.style.setProperty('--c',colorOf(e));(function(k,id){x.onclick=function(ev){ev.stopPropagation();jumpTo(k,id)}})(key,e.id);x.style.cursor='pointer';dots.appendChild(x)});
       c.appendChild(dots);
       if(evs.length>3)c.appendChild(el('span','more','+'+(evs.length-3)+' weitere'));
       c.setAttribute('aria-label',LONG.format(d)+', '+evs.length+' Einträge');
@@ -864,7 +866,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(!n)return '';if(plus)return n;if(n.indexOf('00')===0)return n.slice(2);if(n.charAt(0)==='0')return '49'+n.slice(1);return n;
   }
   function shareText(e,day){
-    return e.title+' – '+LONG.format(parse(day||e.start))+(e.time?', '+e.time+' Uhr':'')+(e.place?', '+e.place:'')+(e.who&&memberOf(e.who)?' ('+nameOf(e)+')':'')+'. Familienkalender';
+    return e.title+' – '+LONG.format(parse(day||e.start))+(e.time?', '+tspan(e)+' Uhr':'')+(e.place?', '+e.place:'')+(e.who&&memberOf(e.who)?' ('+nameOf(e)+')':'')+'. Familienkalender';
   }
   function sendBox(e,day){
     var rec=e.who&&memberOf(e.who)?[memberOf(e.who)]:members;
@@ -1001,7 +1003,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var meta=e.holiday?e.cat:nameOf(e);
     if(showDate){meta=SHORT.format(parse(e.start))+(endOf(e)!==e.start?' – '+SHORT.format(parse(endOf(e))):'')+' · '+meta}
     else if(endOf(e)!==e.start){meta+=' · bis '+SHORT.format(parse(endOf(e)))}
-    if(e.time)meta+=' · '+e.time+' Uhr';
+    if(e.time)meta+=' · '+tspan(e)+' Uhr';
     if(e.repeat)meta+=' · '+REPEAT_LABEL[e.repeat]+(e.until?' bis '+fmtBirthday(e.until):'');
     b.appendChild(el('div','m',meta));
     if(e.place){var pl=el('a','minfo','Ort: '+e.place);pl.href='https://maps.apple.com/?q='+encodeURIComponent(e.place);pl.target='_blank';pl.rel='noopener';b.appendChild(pl)}
@@ -1115,6 +1117,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     $('fStart').value=e?e.start:selected;
     $('fEnd').value=e&&e.end?e.end:'';
     $('fTime').value=e&&e.time?e.time:'';
+    $('fTimeEnd').value=e&&e.timeEnd?e.timeEnd:'';
     $('fNote').value=e&&e.note?e.note:'';
     $('fRemind').value=e&&e.remind!=null?String(e.remind):'';catHint();
     $('fExtra').value=e&&e.extra?e.extra.map(function(m){return Math.round(m/1440)}).join(', '):'';
@@ -1150,8 +1153,9 @@ body:has(.modal:not([hidden])) .totop{display:none}
     ev.preventDefault();
     var start=$('fStart').value,end=$('fEnd').value;
     if(end&&end<start){$('evErr').textContent='Das Enddatum liegt vor dem Startdatum.';return}
+    var tEnd=$('fTime').value?$('fTimeEnd').value:'';
     if($('fRepeat').value&&$('fUntil').value&&$('fUntil').value<start){$('evErr').textContent='Das Ende der Wiederholung liegt vor dem Start.';return}
-    var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:$('fRepeat').value?'':end,time:$('fTime').value,note:$('fNote').value.trim(),
+    var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:$('fRepeat').value?'':end,time:$('fTime').value,timeEnd:tEnd,note:$('fNote').value.trim(),
       remind:$('fRemind').value===''?null:Number($('fRemind').value),
       extra:extraMinutes(),
       remindWa:rOn()&&$('fRemindWa').checked,
