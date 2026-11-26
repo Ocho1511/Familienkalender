@@ -189,6 +189,8 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
 #splash.photo{background-size:cover;background-position:center;justify-content:flex-end;gap:14px;padding-bottom:calc(56px + env(safe-area-inset-bottom,0px))}
 #splash.photo .name{text-shadow:0 2px 14px rgba(0,0,0,.55)}
 #splash.photo .claim{color:rgba(255,255,255,.92);text-shadow:0 1px 8px rgba(0,0,0,.6)}
+.whowrap{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:0}
+.whobox{display:flex;flex-wrap:wrap;gap:6px 14px;padding:6px 2px}
 .chk{flex-direction:row;align-items:center;gap:8px;color:var(--fg);font-size:14px}
 .chk input{width:auto;min-height:0;flex:none}
 .item.flash{animation:flashitem 1.8s ease}
@@ -324,9 +326,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       <input id="fTitle" required maxlength="120" placeholder="z. B. Mathe-Klassenarbeit, Fußballtraining, Urlaub">
     </label>
     <div class="row">
-      <label for="fWho">Wer
-        <select id="fWho"></select>
-      </label>
+      <div class="whowrap"><span>Wer (nichts angehakt = Alle)</span><div id="fWho" class="whobox"></div></div>
       <label for="fCat">Art
         <select id="fCat"></select>
       </label>
@@ -537,12 +537,14 @@ body:has(.modal:not([hidden])) .totop{display:none}
   function uid(){var a=new Uint8Array(12);try{crypto.getRandomValues(a)}catch(e){for(var i=0;i<12;i++)a[i]=Math.floor(Math.random()*256)}return Array.prototype.map.call(a,function(x){return (x%36).toString(36)}).join('')}
   function tspan(e){return e.time+(e.timeEnd&&e.timeEnd!==e.time?'–'+e.timeEnd:'')}
   function memberOf(id){for(var i=0;i<members.length;i++)if(members[i].id===id)return members[i];return null}
-  function colorOf(ev){var m=memberOf(ev.who);return m?m.color:'#7d8a82'}
-  function nameOf(ev){var m=memberOf(ev.who);return m?m.name:'Alle'}
+  /* Wer: who = erste Person, whoMore = weitere Personen; leer = Alle */
+  function whoIds(ev){var a=ev&&ev.who?[ev.who].concat(ev.whoMore||[]):[];return a.filter(function(x,i){return x&&memberOf(x)&&a.indexOf(x)===i})}
+  function colorOf(ev){var m=memberOf(whoIds(ev)[0]);return m?m.color:'#7d8a82'}
+  function nameOf(ev){var a=whoIds(ev).map(function(x){return memberOf(x).name});return a.length?a.join(', '):'Alle'}
   function endOf(ev){if(ev.repeat)return ev.start;return ev.end&&ev.end>=ev.start?ev.end:ev.start}
   var REPEAT_LABEL={d:'täglich',w:'jede Woche','2w':'alle 2 Wochen',m:'jeden Monat',y:'jedes Jahr'};
   function hasSel(){for(var k in sel)if(sel[k])return true;return false}
-  function visible(ev){return !ev.who||!hasSel()||!!sel[ev.who]}
+  function visible(ev){var a=whoIds(ev);return !a.length||!hasSel()||a.some(function(x){return !!sel[x]})}
   function bdEvents(key){
     var md=key.slice(5),y=+key.slice(0,4),out=[];
     members.forEach(function(m){
@@ -745,7 +747,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
   /* Tagesfarbe nach Personen (Streifen bei mehreren) */
   function dayBg(evs){
     var cols=[];
-    evs.forEach(function(e){var cc=memberOf(e.who)?colorOf(e):null;if(cc&&cols.indexOf(cc)<0)cols.push(cc)});
+    evs.forEach(function(e){whoIds(e).forEach(function(x){var cc=memberOf(x).color;if(cc&&cols.indexOf(cc)<0)cols.push(cc)})});
     if(!cols.length)return '';
     var pct=hasSel()?50:32;
     var tint=function(x){return 'color-mix(in srgb,'+x+' '+pct+'%,var(--surface))'};
@@ -866,10 +868,10 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(!n)return '';if(plus)return n;if(n.indexOf('00')===0)return n.slice(2);if(n.charAt(0)==='0')return '49'+n.slice(1);return n;
   }
   function shareText(e,day){
-    return e.title+' – '+LONG.format(parse(day||e.start))+(e.time?', '+tspan(e)+' Uhr':'')+(e.place?', '+e.place:'')+(e.who&&memberOf(e.who)?' ('+nameOf(e)+')':'')+'. Familienkalender';
+    return e.title+' – '+LONG.format(parse(day||e.start))+(e.time?', '+tspan(e)+' Uhr':'')+(e.place?', '+e.place:'')+(whoIds(e).length?' ('+nameOf(e)+')':'')+'. Familienkalender';
   }
   function sendBox(e,day){
-    var rec=e.who&&memberOf(e.who)?[memberOf(e.who)]:members;
+    var rec=whoIds(e).length?whoIds(e).map(memberOf):members;
     var nums=rec.map(function(m){return phoneDigits(m.phone||m.whatsapp)}).filter(Boolean);
     var waNums=rec.map(function(m){return phoneDigits(m.whatsapp||m.phone)}).filter(Boolean);
     var mails=rec.map(function(m){return m.email?encodeURIComponent(m.email).replace('%40','@'):''}).filter(Boolean);
@@ -879,7 +881,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     var sm=el('a','btn ghost sm','SMS');sm.href='sms:'+nums.map(function(n){return '+'+n}).join(',')+'?&body='+t;box.appendChild(sm);
     var ml=el('a','btn ghost sm','E-Mail');ml.href='mailto:'+mails.join(',')+'?subject='+encodeURIComponent('Termin: '+e.title)+'&body='+t;box.appendChild(ml);
     var srv=el('div','send'),sm2=el('div','sub');
-    srv.appendChild(el('span','sub','Jetzt über den Server senden an '+(e.who&&memberOf(e.who)?memberOf(e.who).name:'alle')+':'));
+    srv.appendChild(el('span','sub','Jetzt über den Server senden an '+(whoIds(e).length?nameOf(e):'alle')+':'));
     [['wa','WhatsApp'],['sms','SMS'],['mail','E-Mail']].forEach(function(x){
       var b=el('button','btn ghost sm',x[1]);b.type='button';
       b.onclick=function(){
@@ -1043,10 +1045,13 @@ body:has(.modal:not([hidden])) .totop{display:none}
   /* ---- Eintrag ---- */
   function fillWho(sel){
     var w=$('fWho');w.textContent='';
-    var o=el('option',null,'Alle');o.value='';w.appendChild(o);
-    members.forEach(function(m){var x=el('option',null,m.name);x.value=m.id;w.appendChild(x)});
-    w.value=sel||'';
+    var on=Array.isArray(sel)?sel:(sel?[sel]:[]);
+    members.forEach(function(m){
+      var l=el('label','chk'),cb=document.createElement('input');cb.type='checkbox';cb.value=m.id;cb.checked=on.indexOf(m.id)>=0;
+      l.appendChild(cb);l.appendChild(document.createTextNode(' '+m.name));w.appendChild(l);
+    });
   }
+  function whoSel(){return Array.prototype.map.call($('fWho').querySelectorAll('input:checked'),function(c){return c.value})}
   function leadLabel(min){
     if(min===0)return 'zum Zeitpunkt';
     if(min<60)return min+' Min. vorher';
@@ -1111,7 +1116,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(e&&e.virtual)return;
     editing=e||null;
     $('evHead').textContent=e?'Eintrag bearbeiten':'Neuer Eintrag';
-    fillWho(e?e.who:(load('fk-me')||''));
+    fillWho(e?whoIds(e):(load('fk-me')||''));
     $('fTitle').value=e?e.title:'';
     fillCats(e?(e.cat||'Termin'):'Aktivität');
     $('fStart').value=e?e.start:selected;
@@ -1155,7 +1160,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
     if(end&&end<start){$('evErr').textContent='Das Enddatum liegt vor dem Startdatum.';return}
     var tEnd=$('fTime').value?$('fTimeEnd').value:'';
     if($('fRepeat').value&&$('fUntil').value&&$('fUntil').value<start){$('evErr').textContent='Das Ende der Wiederholung liegt vor dem Start.';return}
-    var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:$('fWho').value,cat:$('fCat').value,start:start,end:$('fRepeat').value?'':end,time:$('fTime').value,timeEnd:tEnd,note:$('fNote').value.trim(),
+    var data={id:editing?editing.id:uid(),title:$('fTitle').value.trim(),who:whoSel()[0]||'',whoMore:whoSel().slice(1),cat:$('fCat').value,start:start,end:$('fRepeat').value?'':end,time:$('fTime').value,timeEnd:tEnd,note:$('fNote').value.trim(),
       remind:$('fRemind').value===''?null:Number($('fRemind').value),
       extra:extraMinutes(),
       remindWa:rOn()&&$('fRemindWa').checked,

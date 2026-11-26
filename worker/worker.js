@@ -108,6 +108,8 @@ async function saveState(env, state) {
   }
 }
 
+// Wer: who = erste Person, whoMore = weitere Personen; keine Person = alle
+const whoIdsOf = (e) => (e.who ? [e.who, ...(e.whoMore || [])] : []);
 function cleanEvent(e) {
   if (!e || !ID_RE.test(e.id || '')) return null;
   const title = str(e.title, 120).trim();
@@ -120,6 +122,7 @@ function cleanEvent(e) {
   const real = (hasRemind && Number(e.remind) >= 0) || extra.length > 0;
   return {
     id: e.id, title, who: ID_RE.test(e.who || '') ? e.who : '',
+    whoMore: ID_RE.test(e.who || '') && Array.isArray(e.whoMore) ? (() => { const a = [...new Set(e.whoMore.filter((x) => typeof x === 'string' && ID_RE.test(x) && x !== e.who))].slice(0, 12); return a.length ? a : undefined; })() : undefined,
     cat: str(e.cat, 30).replace(/[\r\n\t]+/g, ' ').trim() || 'Termin',
     start: e.start, end, time: TIME_RE.test(e.time || '') ? e.time : '',
     timeEnd: TIME_RE.test(e.time || '') && TIME_RE.test(e.timeEnd || '') && e.timeEnd !== e.time ? e.timeEnd : undefined,
@@ -309,7 +312,7 @@ async function runReminders(env) {
   const sentKeys = [];
   const waQueue = [];
   const chQueue = [];
-  const add = (who, msg) => hashes.forEach((h) => { if (!who || subs[h].memberId === who) (outbox[h] = outbox[h] || []).push({ ...msg, silent: subs[h].sound === false }); });
+  const add = (who, msg) => hashes.forEach((h) => { if (!who || !who.length || (Array.isArray(who) ? who.includes(subs[h].memberId) : subs[h].memberId === who)) (outbox[h] = outbox[h] || []).push({ ...msg, silent: subs[h].sound === false }); });
 
   const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
   const fromDay = isoDay(last - 86400000), toDay = isoDay(now + 62 * 86400000);
@@ -342,14 +345,15 @@ async function runReminders(env) {
       const dk = 'sent:' + e.id + ':' + t;
       if (await env.KV.get(dk)) continue;
       sentKeys.push(dk);
-      const who = e.who && names[e.who] ? names[e.who] : 'Alle';
-      if (eff.push) add(e.who || '', { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(eff.remind) + (e.place ? ' · ' + e.place : '') });
-      const rec2 = (state.members || []).filter((m) => !e.who || m.id === e.who);
+      const wIds = whoIdsOf(e).filter((x) => names[x]);
+      const who = wIds.length ? wIds.map((x) => names[x]).join(', ') : 'Alle';
+      if (eff.push) add(wIds, { title: e.title, body: (e.time ? e.time + ' Uhr' : 'ganztägig') + ' · ' + who + ' · ' + leadText(eff.remind) + (e.place ? ' · ' + e.place : '') });
+      const rec2 = (state.members || []).filter((m) => !wIds.length || wIds.includes(m.id));
       const vars = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: leadText(eff.remind) };
       if (eff.sms && smsConfigured(env)) rec2.filter((m) => waNumber(m.phone || m.whatsapp)).forEach((m) => chQueue.push({ ch: 'sms', m, v: vars }));
       if (eff.mail && mailConfigured(env)) rec2.filter((m) => m.email).forEach((m) => chQueue.push({ ch: 'mail', m, v: vars }));
       if (eff.wa && waConfigured(env)) {
-        const rec = (state.members || []).filter((m) => (!e.who || m.id === e.who) && waNumber(m.whatsapp || m.phone));
+        const rec = (state.members || []).filter((m) => (!wIds.length || wIds.includes(m.id)) && waNumber(m.whatsapp || m.phone));
         rec.forEach((m) => waQueue.push({ to: waNumber(m.whatsapp || m.phone), params: [e.title, deDate(date) + (e.time ? ' ' + e.time + ' Uhr' : ' ganztägig') + ' (' + leadText(eff.remind) + ')', who] }));
       }
     }
@@ -557,7 +561,8 @@ function buildIcs(state, onlyPriv) {
     'X-WR-CALNAME:' + (onlyPriv ? 'Familienkalender (privat)' : 'Familienkalender'), 'X-PUBLISHED-TTL:PT1H', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H'];
   (state.events || []).forEach((e) => {
     if (e.src === 'outlook' || (onlyPriv && !e.priv)) return;
-    const who = e.who && names[e.who] ? names[e.who] : 'Alle';
+    const wl = whoIdsOf(e).filter((x) => names[x]);
+    const who = wl.length ? wl.map((x) => names[x]).join(', ') : 'Alle';
     const end = e.end && e.end >= e.start ? e.end : e.start;
     L.push('BEGIN:VEVENT', 'UID:' + e.id + '@familienkalender', 'DTSTAMP:' + stamp);
     if (e.time) {
@@ -849,8 +854,9 @@ export default {
       const date = DATE_RE.test(body.date || '') ? body.date : e.start;
       const want = [...new Set((Array.isArray(body.channels) ? body.channels : []).filter((x) => ['wa', 'sms', 'mail'].includes(x)))];
       if (!want.length) return reply({ ok: false, error: 'Kein Kanal gewaehlt' }, 200, c);
-      const who = e.who && state.members.find((m) => m.id === e.who) ? state.members.find((m) => m.id === e.who).name : 'Alle';
-      const rec = state.members.filter((m) => !e.who || m.id === e.who);
+      const wIds = whoIdsOf(e).filter((x) => state.members.some((m) => m.id === x));
+      const who = wIds.length ? wIds.map((x) => state.members.find((m) => m.id === x).name).join(', ') : 'Alle';
+      const rec = state.members.filter((m) => !wIds.length || wIds.includes(m.id));
       const v = { titel: e.title, datum: deDate(date), zeit: e.time ? 'um ' + e.time + ' Uhr' : 'ganztägig', ort: e.place ? ', ' + e.place : '', ortText: e.place || '–', wer: who, vorlauf: 'jetzt' };
       const texts = await getTexts(env);
       const report = [];
