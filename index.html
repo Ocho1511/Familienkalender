@@ -1582,7 +1582,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
       kFound=j.events.map(function(e){
         var m=memberByName(e.person);
         return {use:true,title:e.title,date:e.date,end_date:e.end_date,time:e.time,place:e.place,note:e.note,category:e.category,who:m?m.id:'',
-          dup:events.some(function(x){return x.start===e.date&&String(x.title).toLowerCase()===e.title.toLowerCase()})};
+          dup:events.some(function(x){return x.start===e.date&&(String(x.title).toLowerCase()===e.title.toLowerCase()||(!!e.time&&x.time===e.time&&(x.who||'')===(m?m.id:'')))})};
       });
       kFound.forEach(function(f){if(f.dup)f.use=false});
       renderFound();
