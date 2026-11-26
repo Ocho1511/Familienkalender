@@ -98,6 +98,16 @@ function cleanMember(m) {
     note: str(m.note, 300).trim(),
   };
 }
+// Cloudflare KV erlaubt nur ca. 1 Schreibvorgang pro Sekunde auf denselben Eintrag. Zu schnelle Schreibvorgaenge
+// (Termin speichern, gleich danach Anlage) schlugen mit 500 fehl. Deshalb: kurz warten und erneut versuchen.
+async function saveState(env, state) {
+  const text = JSON.stringify(state);
+  for (let i = 0; ; i++) {
+    try { await env.KV.put('state', text); return; }
+    catch (e) { if (i >= 3) throw e; await new Promise((r) => setTimeout(r, 1200 * (i + 1))); }
+  }
+}
+
 function cleanEvent(e) {
   if (!e || !ID_RE.test(e.id || '')) return null;
   const title = str(e.title, 120).trim();
@@ -507,7 +517,7 @@ async function syncOutlook(env) {
     return last < today; // vergangene Termine bleiben als Verlauf
   });
   removed = before - state.events.length;
-  if (added || updated || removed) await env.KV.put('state', JSON.stringify(state));
+  if (added || updated || removed) await saveState(env, state);
   return done({ ok: true, total: res.total, priv: res.priv, simplified: res.simplified, added, updated, removed });
 }
 async function syncOutlookIfDue(env) {
@@ -792,7 +802,7 @@ export default {
       const id = randomId();
       await env.KV.put('att:' + id, buf, { metadata: { t: type, n: name } });
       ev.att = (ev.att || []).concat([{ id, name, type, size: buf.byteLength, added: Date.now() }]);
-      await env.KV.put('state', JSON.stringify(stA));
+      await saveState(env, stA);
       return reply(snap(stA), 200, c);
     }
     if (request.method !== 'POST') return reply({ error: 'POST erwartet' }, 405, c);
@@ -952,13 +962,13 @@ export default {
     if (body.op === 'cats_put') {
       const cl = cleanCats(body.cats);
       if (cl.length) state.cats = cl; else delete state.cats;
-      await env.KV.put('state', JSON.stringify(state));
+      await saveState(env, state);
       return reply(snap(state), 200, c);
     }
     if (body.op === 'reorder') {
       const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
       state.members.forEach((m) => { const i = ids.indexOf(m.id); if (i >= 0) m.order = i; });
-      await env.KV.put('state', JSON.stringify(state));
+      await saveState(env, state);
       return reply(snap(state), 200, c);
     }
     if (body.op === 'photo_get') {
@@ -994,7 +1004,7 @@ export default {
         e.att = e.att.filter((a) => a.id !== body.attId);
         if (!e.att.length) delete e.att;
         await env.KV.delete('att:' + String(body.attId));
-        await env.KV.put('state', JSON.stringify(state));
+        await saveState(env, state);
       }
       return reply(snap(state), 200, c);
     }
@@ -1012,6 +1022,8 @@ export default {
         const item = isMember ? cleanMember(body.item) : cleanEvent(body.item);
         if (!item) return reply({ error: 'Ungueltige Daten' }, 400, c);
         const i = list.findIndex((x) => x.id === item.id);
+        // Vom KI-Scan: denselben Termin (Datum, Titel, Uhrzeit) nicht ein zweites Mal anlegen
+        if (!isMember && i < 0 && body.skipDup === true && list.some((x) => x.start === item.start && String(x.title).trim().toLowerCase() === item.title.toLowerCase() && (x.time || '') === (item.time || ''))) return reply(snap(state), 200, c);
         if (isMember) item.createdAt = i >= 0 ? list[i].createdAt : Date.now(); // Anlegezeit nur der Server bestimmt
         if (!isMember && i >= 0 && list[i].att) item.att = list[i].att; // Anlagen verwaltet nur der Server
         if (!isMember && i >= 0 && list[i].src) item.src = list[i].src; // Herkunft Outlook nur durch den Abgleich
@@ -1025,7 +1037,7 @@ export default {
         if (i >= 0 && !isMember) for (const a of list[i].att || []) await env.KV.delete('att:' + a.id);
         if (i >= 0) list.splice(i, 1);
       }
-      await env.KV.put('state', JSON.stringify(state));
+      await saveState(env, state);
       return reply(snap(state), 200, c);
     }
     return reply({ error: 'op?' }, 400, c);

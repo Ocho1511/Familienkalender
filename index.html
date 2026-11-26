@@ -1595,7 +1595,7 @@ body:has(.modal:not([hidden])) .totop{display:none}
   /* Der Server speichert alles in einem Eintrag (max. ca. 1 Schreibvorgang/s): kurz warten, bei Fehlern wiederholen */
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
   function putRetry(item,n){n=n||1;
-    return sleep(n===1?1100:1500*n).then(function(){return call({op:'put',kind:'event',item:item})}).catch(function(e){
+    return sleep(n===1?1100:1500*n).then(function(){return call({op:'put',kind:'event',item:item,skipDup:true})}).catch(function(e){
       if(n>=4||(e&&e.status>=400&&e.status<500&&e.status!==429))throw e;return putRetry(item,n+1)});
   }
   $('kSave').onclick=function(){
@@ -1609,19 +1609,21 @@ body:has(.modal:not([hidden])) .totop{display:none}
         var id=uid();
         var item={id:id,title:f.title.trim(),who:f.who||'',cat:f.category||'Termin',start:f.date,end:f.end_date&&f.end_date>f.date?f.end_date:'',time:/^\d{2}:\d{2}$/.test(f.time||'')?f.time:'',place:(f.place||'').trim(),note:(f.note||'').trim(),priv:true,createdAt:Date.now()};
         return putRetry(item).then(function(j){
-          saved++;f.use=false;f.dup=true;apply(j); /* nicht ein zweites Mal eintragen */
+          f.use=false;f.dup=true;apply(j); /* nicht ein zweites Mal eintragen */
+          if(!(j.events||[]).some(function(x){return x.id===id}))return null; /* gab es schon, Server hat nichts angelegt */
+          saved++;
           if(!kBlob||attDone)return null;
           attDone=true; /* Die Seite wird nur am ersten Termin abgelegt, nicht 60-mal */
-          return uploadAtt(id,kBlob,kName,kType).then(apply).catch(function(){failed++});
+          return sleep(1300).then(function(){return uploadAtt(id,kBlob,kName,kType)}).then(apply).catch(function(){failed++});
         }).catch(function(e){if(!firstErr)firstErr=(e&&e.message)||'Fehler';});
       });
     },Promise.resolve()).then(function(){
       $('kSave').disabled=false;
-      if(!saved){$('kMsg').textContent='Das Eintragen hat nicht geklappt: '+firstErr;return}
+      if(!saved&&firstErr){$('kMsg').textContent='Das Eintragen hat nicht geklappt: '+firstErr;return}
       $('kMsg').textContent='';
       selected=firstDate;var d=parse(firstDate);view=new Date(d.getFullYear(),d.getMonth(),1);
       $('kModal').hidden=true;jumpTo(firstDate,null);
-      if(saved<todo.length)setStatusMsg((todo.length-saved)+' von '+todo.length+' Terminen ließen sich nicht eintragen ('+firstErr+').');
+      if(firstErr)setStatusMsg('Nicht alle Termine ließen sich eintragen ('+firstErr+').');
       else if(failed)alert_failed(failed);
     });
   };
