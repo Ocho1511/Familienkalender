@@ -199,6 +199,7 @@ a.btn{display:inline-block;text-decoration:none;line-height:1.2;text-align:cente
   box-shadow:0 4px 14px rgba(0,0,0,.28);cursor:pointer;padding:0}
 .totop[hidden]{display:none}
 body:has(.modal:not([hidden])) .totop{display:none}
+.totop.plus{right:calc(max(16px,env(safe-area-inset-right,0px)) + 58px)}
 .mquick{display:flex;gap:8px;align-items:center}
 .mquick input{flex:1;min-width:0}
 .catrow{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}
@@ -305,6 +306,9 @@ body:has(.modal:not([hidden])) .totop{display:none}
   </div>
 </div>
 
+<button id="fabAdd" class="totop plus" type="button" aria-label="Neuen Eintrag für den gewählten Tag" title="Neuer Eintrag für den gewählten Tag" hidden>
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+</button>
 <button id="toTop" class="totop" type="button" aria-label="Nach oben" title="Nach oben" hidden>
   <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
 </button>
@@ -1693,8 +1697,9 @@ body:has(.modal:not([hidden])) .totop{display:none}
   })();
   /* Zurück-nach-oben-Knopf: erscheint nach etwas Scrollen */
   (function(){
-    var b=$('toTop');
-    function upd(){var hide=(window.scrollY||document.documentElement.scrollTop)<500;if(b.hidden!==hide)b.hidden=hide}
+    var b=$('toTop'),pl=$('fabAdd');
+    function upd(){var hide=(window.scrollY||document.documentElement.scrollTop)<500;if(b.hidden!==hide)b.hidden=hide;if(pl.hidden!==hide)pl.hidden=hide}
+    pl.onclick=function(){openEvent(null)};
     window.addEventListener('scroll',upd,{passive:true});
     b.onclick=function(){try{window.scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo(0,0)}};
     upd();
